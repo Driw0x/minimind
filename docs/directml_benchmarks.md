@@ -317,6 +317,16 @@ Measured performance:
     Steps / epoch:            158,780
     Estimated epoch duration: 232.87 h
     Estimated epoch duration: 9.70 days
+    Peak dedicated GPU memory: 11,623.12 MB
+
+Dedicated GPU memory was measured externally using Windows GPU process
+memory counters during the reference benchmark.
+
+Peak dedicated GPU memory reached approximately 11.62 GB.
+
+The training workload remained close to 11.6 GB of dedicated GPU memory
+for a significant portion of the run, indicating that the reference
+configuration operates relatively close to the available VRAM limit.
 
 The benchmark therefore indicates that real MiniMind pretraining is technically executable on the tested DirectML hardware, but full-dataset training remains very slow.
 

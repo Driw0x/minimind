@@ -71,7 +71,7 @@ Determine whether DirectML is practically usable for MiniMind training and ident
 
 * [x] Measure real pretraining throughput
 * [x] Measure iteration time and samples/tokens processed per second
-* [ ] Measure GPU memory usage during real training
+* [x] Measure GPU memory usage during real training
 * [x] Compare synthetic benchmark results with real dataset training
 * [x] Estimate realistic training duration
 
