@@ -93,10 +93,10 @@ Adapt the actual MiniMind training pipeline to run on DirectML.
 
 Validate the main MiniMind training stages with DirectML.
 
-- [ ] Validate pretraining
-- [ ] Validate supervised fine-tuning (SFT)
-- [ ] Validate LoRA training
-- [ ] Validate additional training stages supported by MiniMind
+- [x] Validate pretraining
+- [x] Validate supervised fine-tuning (SFT)
+- [x] Validate LoRA training
+- [x] Validate additional training stages supported by MiniMind
 - [ ] Validate checkpoint compatibility between training stages
 - [ ] Document unsupported or partially supported DirectML operations
 
