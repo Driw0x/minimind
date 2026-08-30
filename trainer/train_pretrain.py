@@ -71,6 +71,9 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             del state_dict
 
         del input_ids, labels, res, loss
+        
+        if args.max_steps > 0 and step >= args.max_steps:
+            break
 
     if last_step > start_step and last_step % args.accumulation_steps != 0:
         scaler.unscale_(optimizer)
@@ -104,6 +107,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
     parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps (0 = no limit)")
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========

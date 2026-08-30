@@ -53,3 +53,5 @@ For technical problems, causes, and solutions, see `project_memory.md`.
 * Ran the complete test suite successfully with **34 tests passing**.
 * Documented known DirectML limitations and expected CPU fallbacks.
 * Confirmed that the codebase is ready for full training validation on DirectML.
+* Added a DirectML training compatibility benchmark for batch size and sequence length.
+* Identified `2 × 256` as a conservative configuration for further pipeline validation.

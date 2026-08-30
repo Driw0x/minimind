@@ -636,3 +636,211 @@ CUDA checkpoint
 should not become separate checkpoint formats.
 
 Model architecture and training stage determine checkpoint compatibility, not the device used to execute the model.
+
+---
+
+## Batch Size and Sequence Length Constraints on DirectML
+
+### Problem
+
+During real training validation on DirectML, some combinations of `batch_size` and `max_seq_len` became extremely slow or could not complete within a reasonable amount of time.
+
+For example, increasing both parameters can significantly increase the computational and memory requirements of a training step:
+
+```text
+batch_size ↑
+     +
+max_seq_len ↑
+     ↓
+Higher memory usage
+Higher computation cost
+Longer training steps
+```
+
+A configuration may therefore technically start on DirectML while still being unusable in practice because a single training step takes too long.
+
+This also made automatic configuration testing inefficient: if a relatively lightweight configuration already fails or times out, testing a strictly heavier configuration may provide no useful information.
+
+### Cause
+
+`batch_size` and `max_seq_len` both directly affect the amount of data processed by the model during each training step.
+
+Sequence length is particularly expensive for transformer models because attention computation grows rapidly as the sequence becomes longer.
+
+DirectML also introduces additional performance constraints compared with the execution backends targeted by the original MiniMind defaults, including possible CPU fallbacks for unsupported operations.
+
+As a result, upstream default training settings cannot be assumed to be practical on the current DirectML environment.
+
+### Solution
+
+Training configuration validation was changed to test progressively larger combinations of:
+
+```text
+batch_size
+max_seq_len
+```
+
+instead of immediately assuming that the upstream defaults are usable.
+
+Each candidate configuration can be tested with a limited number of training steps and a timeout.
+
+Conceptually:
+
+```text
+Candidate configuration
+        ↓
+Run short training test
+        ↓
+Completes within timeout?
+     ↙              ↘
+   Yes               No
+    ↓                 ↓
+Record success     Record failure
+    ↓
+Try larger configuration
+```
+
+The benchmark progression also takes configuration dominance into account.
+
+If a configuration fails, configurations that are strictly more demanding do not need to be tested when the failure already demonstrates that they cannot reasonably improve the situation.
+
+For example:
+
+```text
+batch=8, seq_len=128
+        ↓
+      fails
+        ↓
+batch=16, seq_len=128
+        ↓
+      skip
+```
+
+because increasing the batch size while keeping the same sequence length cannot reduce the workload.
+
+However, configurations that trade one dimension for another may still be useful to test:
+
+```text
+batch=8,  seq_len=256
+        ↓
+timeout / too expensive
+        ↓
+batch=16, seq_len=128
+        ↓
+may still be tested
+```
+
+because the second configuration reduces sequence length while increasing batch size and therefore represents a different memory/performance trade-off.
+
+### Observed Non-Monotonic Behavior
+
+During DirectML configuration testing, an unexpected behavior was observed when comparing small batch sizes and similar sequence lengths.
+
+In particular:
+
+```text
+batch_size = 1
+max_seq_len = 300
+→ failed / was not viable
+```
+
+while:
+
+```text
+batch_size = 2
+max_seq_len = 340
+→ succeeded
+```
+
+At first glance, this appears counterintuitive because the second configuration processes both a larger batch and a longer sequence.
+
+This observation shows that DirectML viability cannot be predicted solely from the apparent size of a configuration.
+
+### Possible Explanation
+
+DirectML execution depends on more than the theoretical workload represented by:
+
+```text
+batch_size × max_seq_len
+```
+
+Different tensor shapes may result in different:
+
+* kernel execution paths;
+* memory allocation patterns;
+* operator implementations;
+* internal DirectML behavior;
+* CPU fallback behavior.
+
+A larger tensor shape may therefore execute successfully while a theoretically smaller shape fails.
+
+The exact internal cause of the `1 × 300` versus `2 × 340` behavior has not been established, so it should not be attributed to a specific DirectML optimization without further investigation.
+
+### Consequence
+
+A successful or failed configuration cannot always be used to infer the result of every apparently larger or smaller configuration.
+
+For example, the observation:
+
+```text
+1 × 300 → FAIL
+2 × 340 → PASS
+```
+
+means that the benchmark should not assume:
+
+```text
+smaller configuration = always safer
+larger configuration  = always less viable
+```
+
+Configuration pruning is still useful when a configuration is clearly dominated by another one, but unusual DirectML behavior means that representative configurations should be tested empirically rather than rejected solely from their theoretical workload.
+
+### Decision
+
+DirectML training settings should be selected empirically rather than copied directly from the upstream MiniMind defaults.
+
+The configuration search should:
+
+* start with conservative values;
+* progressively approach the upstream settings;
+* use short training runs for validation;
+* enforce a timeout for configurations that are too slow;
+* stop exploring configurations that are strictly heavier than an already failing configuration;
+* continue testing configurations that represent a different `batch_size` / `max_seq_len` trade-off.
+
+Once a stable configuration is identified, the normal training workflow can be launched directly with the selected:
+
+```text
+batch_size
+max_seq_len
+```
+
+values instead of repeating the benchmark.
+
+#### DirectML batch size / sequence length validation
+
+A compatibility benchmark was added to determine which training configurations can complete several real training steps on DirectML without crashing.
+
+Pretraining benchmark results:
+
+| Batch size | Sequence length | Result |
+|---:|---:|---|
+| 1 | 64 | PASS |
+| 1 | 128 | PASS |
+| 1 | 256 | PASS |
+| 1 | 340 | FAIL (`0xC0000409`) |
+| 2 | 128 | PASS |
+| 2 | 256 | PASS |
+| 2 | 340 | PASS |
+| 4 | 128 | PASS |
+| 4 | 256 | TIMEOUT |
+| 8 | 128 | TIMEOUT |
+
+Observations:
+
+- DirectML stability is not strictly monotonic with batch size and sequence length.
+- `1 × 340` caused a native Windows/DirectML process crash, while `2 × 340` completed successfully.
+- Larger configurations such as `4 × 256` and `8 × 128` did not crash but exceeded the benchmark timeout.
+- `2 × 256` was selected as a conservative configuration for validating the remaining training pipeline.
+- These results apply to `train_pretrain.py` and should not be assumed to represent every trainer.
