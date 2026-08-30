@@ -16,12 +16,12 @@ This fork aims to provide a Windows-compatible alternative using PyTorch DirectM
 
 The main goals are:
 
-- support Windows + DirectML environments;
-- remove the dependency on CUDA for GPU acceleration;
-- adapt MiniMind training and inference code where necessary;
-- identify PyTorch operations not natively supported by DirectML;
-- provide tests to validate DirectML compatibility;
-- document differences from the upstream project.
+* support Windows + DirectML environments;
+* remove the dependency on CUDA for GPU acceleration;
+* adapt MiniMind training and inference code where necessary;
+* identify PyTorch operations not natively supported by DirectML;
+* provide tests to validate DirectML compatibility;
+* document differences from the upstream project.
 
 ---
 
@@ -31,21 +31,19 @@ MiniMind training and inference are functional on Windows with DirectML.
 
 The main training pipeline has been validated with DirectML, including:
 
-- pretraining;
-- supervised fine-tuning (SFT);
-- LoRA;
-- DPO;
-- GRPO;
-- PPO;
-- Agent RL;
-- knowledge distillation;
-- checkpoint compatibility between training stages.
+* pretraining;
+* supervised fine-tuning (SFT);
+* LoRA;
+* DPO;
+* GRPO;
+* PPO;
+* Agent RL;
+* knowledge distillation;
+* checkpoint compatibility between training stages.
 
 Some operations still require CPU fallback or have limited DirectML support.
 
-See [DirectML limitations](docs/directml-limitations.md) for currently known compatibility limitations.
-
-The project is currently moving into **M4 — Performance & Stability**.
+The project is currently in **M4 — Performance & Stability**, focusing on longer training runs, performance measurement, CPU fallback impact, and runtime stability.
 
 See the [project roadmap](docs/roadmap.md) for the complete development plan.
 
@@ -55,17 +53,22 @@ See the [project roadmap](docs/roadmap.md) for the complete development plan.
 
 DirectML compatibility has currently been validated on the following configuration:
 
-| Component | Configuration |
-|---|---|
-| OS | Windows |
-| GPU | AMD Radeon RX 7800 XT |
-| RAM | 32 GB |
-| Python | 3.10 |
-| PyTorch | 2.4.1+cpu |
-| Backend | torch-directml |
-| DirectML device | privateuseone:0 |
+| Component       | Configuration         |
+| --------------- | --------------------- |
+| OS              | Windows               |
+| GPU             | AMD Radeon RX 7800 XT |
+| RAM             | 32 GB                 |
+| Python          | 3.10                  |
+| PyTorch         | 2.4.1+cpu             |
+| Backend         | torch-directml        |
+| DirectML adapter | directml:1 (dedicated GPU) |
+| PyTorch device representation | privateuseone:0 |
 
 Other hardware and software configurations may work but have not yet been validated.
+
+Benchmark results are hardware-specific and should not be interpreted as universal DirectML limits.
+
+See [DirectML benchmarks](docs/directml_benchmarks.md) for the tested compatibility configurations.
 
 ---
 
@@ -121,17 +124,17 @@ pytest -q
 
 The test suite covers:
 
-- DirectML device handling;
-- model and tensor placement;
-- forward and backward passes;
-- optimizer execution;
-- dataset fixtures;
-- training smoke tests;
-- checkpoint compatibility between training stages.
+* DirectML device handling;
+* model and tensor placement;
+* forward and backward passes;
+* optimizer execution;
+* dataset fixtures;
+* training smoke tests;
+* checkpoint compatibility between training stages.
 
 A warning related to `aten::lerp.Scalar_out` may appear because this operation is not currently supported natively by the DirectML backend and falls back to CPU execution.
 
-See [DirectML limitations](docs/directml-limitations.md) for details about known fallbacks and compatibility constraints.
+See [DirectML limitations](docs/directml_limitations.md) for known fallbacks and compatibility constraints.
 
 ---
 
@@ -147,7 +150,9 @@ minimind/
 │   ├── original/            # Original MiniMind documentation
 │   ├── development-tools.md
 │   ├── directml_audit.md
-│   ├── directml-limitations.md
+│   ├── directml_benchmarks.md
+│   ├── directml_issues.md
+│   ├── directml_limitations.md
 │   ├── project_memory.md
 │   ├── roadmap.md
 │   └── update_log.md
@@ -177,18 +182,20 @@ Detailed technical information about the DirectML adaptation is maintained separ
 
 ### DirectML
 
-- [DirectML limitations](docs/directml-limitations.md) — known limitations, unsupported operations, and CPU fallbacks.
-- [DirectML audit](docs/directml_audit.md) — generated audit of CUDA-specific code and potential DirectML compatibility concerns.
+* [DirectML limitations](docs/directml_limitations.md) — current unsupported operations, compatibility constraints, and CPU fallbacks.
+* [DirectML issues](docs/directml_issues.md) — technical problems encountered during development, their causes, solutions, and decisions.
+* [DirectML benchmarks](docs/directml_benchmarks.md) — experimental compatibility and performance results for DirectML training configurations.
+* [DirectML audit](docs/directml_audit.md) — automatically generated audit of CUDA-specific code and potential DirectML compatibility concerns.
 
 ### Development
 
-- [Roadmap](docs/roadmap.md) — development milestones and current project progression.
-- [Development tools](docs/development-tools.md) — DirectML audit, deterministic test fixture generation, and sequential training with `train_all.ps1`.
+* [Roadmap](docs/roadmap.md) — development milestones and remaining work.
+* [Development tools](docs/development-tools.md) — DirectML audit, deterministic test fixture generation, and sequential training with `train_all.ps1`.
 
-### Project history
+### Project history and memory
 
-- [Project memory](docs/project_memory.md) — technical problems encountered during development, their causes, and implemented solutions.
-- [Update log](docs/update_log.md) — chronological record of the main changes made to the DirectML adaptation.
+* [Project memory](docs/project_memory.md) — durable architectural decisions, technical lessons, and validation principles.
+* [Update log](docs/update_log.md) — chronological record of the main changes made to the DirectML adaptation.
 
 ---
 
@@ -200,8 +207,8 @@ The original MiniMind README files are preserved in:
 docs/original/
 ```
 
-- Chinese documentation: [docs/original/README.md](docs/original/README.md)
-- English documentation: [docs/original/README_en.md](docs/original/README_en.md)
+* Chinese documentation: [docs/original/README.md](docs/original/README.md)
+* English documentation: [docs/original/README_en.md](docs/original/README_en.md)
 
 These files contain the original project documentation, examples, and usage instructions.
 
@@ -213,16 +220,18 @@ This fork focuses specifically on Windows and DirectML support.
 
 Changes include:
 
-- DirectML device detection and initialization;
-- replacement or guarding of CUDA-specific device handling;
-- DirectML-compatible tensor and model placement;
-- adaptations to the MiniMind training pipeline;
-- handling and documentation of unsupported DirectML operators;
-- DirectML-specific compatibility and training tests;
-- deterministic fixtures for lightweight training validation;
-- development utilities for DirectML compatibility auditing;
-- sequential training utilities for Windows and DirectML;
-- dependency changes for a CUDA-free Windows environment.
+* DirectML device detection and initialization;
+* replacement or guarding of CUDA-specific device handling;
+* DirectML-compatible tensor and model placement;
+* adaptations to the MiniMind training pipeline;
+* component-specific device placement where required;
+* handling and documentation of unsupported DirectML operators;
+* DirectML-specific compatibility and training tests;
+* deterministic fixtures for lightweight training validation;
+* DirectML compatibility benchmarking;
+* development utilities for DirectML compatibility auditing;
+* sequential training utilities for Windows and DirectML;
+* dependency changes for a CUDA-free Windows environment.
 
 The adaptation is being implemented progressively, so not every MiniMind feature should currently be assumed to work with DirectML.
 

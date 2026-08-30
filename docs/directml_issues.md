@@ -248,6 +248,32 @@ The protection belongs in common utilities rather than individual GRPO or PPO im
 
 ---
 
+# Empty Distillation Masks
+
+## Problem
+
+Some truncated SFT samples may contain no supervised tokens within the configured sequence length.
+
+This caused the distillation KL-divergence computation to receive empty logits and fail.
+
+## Cause
+
+The distillation loss assumed that every training sample contained at least one supervised token after truncation and masking.
+
+This assumption does not always hold for short or truncated validation samples.
+
+## Solution
+
+The distillation loss now detects empty token selections and returns a zero loss connected to the computation graph.
+
+## Decision
+
+Training losses that operate on masked token selections must safely handle valid empty selections.
+
+This is treated as a training robustness issue rather than a DirectML limitation.
+
+---
+
 # Checkpoint Compatibility Across Training Stages
 
 ## Problem

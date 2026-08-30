@@ -2,49 +2,225 @@
 
 This document provides a concise technical memory of the MiniMind DirectML adaptation.
 
+It records the main architectural decisions, technical lessons, and validation references that should remain useful throughout the project.
+
 Detailed technical issues are documented in [`directml_issues.md`](directml_issues.md).
 
 Benchmark results and performance experiments are documented in [`directml_benchmarks.md`](directml_benchmarks.md).
+
+Current limitations and fallbacks are documented in [`directml_limitations.md`](directml_limitations.md).
 
 Development progress is tracked separately in [`update_log.md`](update_log.md).
 
 ---
 
-# M1 — DirectML Foundation
+# Architecture Decisions
 
-DirectML support was introduced as an explicit MiniMind execution backend.
+## Keep DirectML Changes Close to Upstream
 
-The main observations were:
+DirectML support should modify as little of the original MiniMind training logic as possible.
 
-* DirectML is exposed internally by PyTorch as `privateuseone:0`.
-* Standard `.to(device)` operations can be reused for DirectML.
-* Forward, backward, loss computation, and optimizer steps were validated.
-* AdamW uses an unsupported DirectML operation (`aten::lerp.Scalar_out`) that automatically falls back to CPU.
-* The fallback does not prevent training.
+The existing MiniMind execution pipeline should be reused whenever possible:
+
+```text
+Model
+  ↓
+Standard PyTorch operations
+  ↓
+Resolved execution device
+  ↓
+CPU / CUDA / DirectML
+```
+
+DirectML-specific copies of existing training pipelines should be avoided.
 
 ### Decision
 
-DirectML support should remain integrated into the existing MiniMind execution pipeline rather than introducing separate DirectML-specific implementations.
+Shared compatibility utilities are preferred over separate DirectML implementations.
 
 ---
 
-# M2 — Pretraining and Evaluation Integration
+## Separate Backend Compatibility From Training Logic
 
-DirectML support was validated through a complete MiniMind workflow rather than only isolated PyTorch operations.
+Training algorithms should remain backend-independent whenever possible.
 
-A lightweight validation model was used:
+Backend-specific responsibilities include:
+
+* device resolution;
+* DirectML initialization;
+* model placement;
+* component-specific device requirements;
+* backend compatibility rules.
+
+These responsibilities belong in shared trainer infrastructure rather than individual training algorithms.
+
+### Decision
+
+Individual trainers should focus on their training algorithm.
+
+Backend compatibility should be centralized in shared trainer utilities.
+
+---
+
+## Allow Component-Specific Device Placement
+
+Not every component of a training workflow must execute on the same device.
+
+Some models or operations may require CPU execution when DirectML does not support their complete inference path.
+
+The current alignment-training configuration may therefore use:
+
+```text
+Trainable model → DirectML
+Reward model    → CPU
+```
+
+Data is transferred between devices when required.
+
+### Decision
+
+Correctness and stability take priority over forcing every component onto DirectML.
+
+---
+
+## Preserve MiniMind Checkpoint Semantics
+
+DirectML is an execution backend and must not introduce a separate checkpoint format.
+
+Checkpoint compatibility depends on factors such as:
+
+```text
+Model architecture
+Training stage
+State dictionary structure
+```
+
+and not on whether the model was executed using CPU, CUDA, or DirectML.
+
+### Decision
+
+Existing MiniMind checkpoint semantics must remain unchanged.
+
+Backend compatibility and checkpoint compatibility should be validated independently.
+
+---
+
+# Important Technical Lessons
+
+## DirectML Device Representation
+
+`torch-directml` integrates DirectML through PyTorch's `PrivateUse1` backend.
+
+A DirectML device may therefore appear internally as:
+
+```text
+privateuseone:0
+```
+
+rather than `directml:0`.
+
+This is expected behavior.
+
+The user-facing MiniMind device option remains:
+
+```text
+directml
+```
+
+### Lesson
+
+Internal `privateuseone` device names should not be interpreted as CPU execution or incorrect DirectML initialization.
+
+---
+
+## CPU Fallbacks Are Acceptable When Necessary
+
+DirectML does not support every PyTorch operation used by MiniMind and its dependencies.
+
+Some unsupported operations can automatically fall back to CPU.
+
+Other components may need to remain explicitly on CPU.
+
+Examples currently include:
+
+```text
+AdamW unsupported operation → automatic CPU fallback
+Reward model                → CPU execution
+```
+
+### Lesson
+
+A CPU fallback is not automatically a compatibility failure.
+
+Fallbacks are acceptable when correctness is preserved, but their performance impact must be evaluated separately.
+
+Current fallbacks are tracked in [`directml_limitations.md`](directml_limitations.md).
+
+---
+
+## Physical GPU Selection Must Be Explicit
+
+The development machine exposes multiple graphics adapters, including an integrated GPU and a dedicated GPU.
+
+Both may be visible to DirectML.
+
+Therefore:
+
+```text
+CPU
+ ≠
+Integrated GPU
+ ≠
+Dedicated GPU
+```
+
+Implicit DirectML device selection can make benchmark results difficult to interpret because separate runs may execute on different physical GPUs.
+
+### Lesson
+
+The intended physical DirectML adapter should be explicitly selected before training or benchmarking.
+
+Reference performance measurements must only be compared when they use the same physical GPU.
+
+---
+
+## Benchmark Compatibility Is Not Full-Training Stability
+
+Short compatibility benchmarks are useful for identifying configurations that fail immediately.
+
+However:
+
+```text
+Benchmark PASS
+    ≠
+Guaranteed full-training stability
+```
+
+A full training run executes for much longer and may encounter different memory, performance, or backend conditions.
+
+### Lesson
+
+Benchmark results should be treated as compatibility indicators.
+
+Final training configurations must be validated with actual training runs.
+
+Detailed measurements belong in [`directml_benchmarks.md`](directml_benchmarks.md).
+
+---
+
+# Regression Configuration
+
+A lightweight MiniMind model is used for fast DirectML compatibility validation:
 
 ```text
 hidden_size = 128
 num_hidden_layers = 2
 ```
 
-The following pipeline was successfully validated:
+This configuration has been used to validate the complete workflow:
 
 ```text
 Training
-   ↓
-DirectML
    ↓
 Checkpoint
    ↓
@@ -55,73 +231,84 @@ Evaluation
 Text generation
 ```
 
-A checkpoint-loading failure was also identified as an architecture mismatch rather than a DirectML issue.
-
 ### Decision
 
-The `128 / 2-layer` configuration is kept as a lightweight DirectML regression configuration.
+The `128 / 2-layer` configuration is retained as a lightweight DirectML regression configuration.
 
-Checkpoint architecture compatibility must be checked independently from backend compatibility.
+It is intended for compatibility validation rather than representative model performance testing.
 
 ---
 
-# M3 — Training Pipeline Compatibility
+# Validation Principles
 
-DirectML support was extended to the remaining MiniMind training pipeline.
+## Test Backend Compatibility Independently
 
-Several compatibility issues were identified:
+DirectML execution should be validated independently from unrelated model or checkpoint problems.
 
-* the GRPO reward model cannot reliably execute on DirectML and remains on CPU;
-* device handling was centralized in shared trainer utilities;
-* empty generated token sequences are protected by shared generation utilities;
-* checkpoint compatibility across training stages was validated;
-* practical `batch_size` and `max_seq_len` limits require hardware-specific benchmarking;
-* the development machine exposes both an integrated and dedicated GPU, requiring explicit DirectML adapter selection.
+A failure should not automatically be attributed to DirectML.
 
-### Decision
-
-Backend compatibility belongs in shared trainer infrastructure rather than individual training algorithms.
-
-Different components may intentionally use different devices when required:
+Relevant checks include:
 
 ```text
-Trainable model → DirectML
-Reward model    → CPU
+Device placement
+Model architecture
+Checkpoint compatibility
+Dataset validity
+Backend operation support
 ```
-
-DirectML must not modify MiniMind checkpoint semantics.
-
-Performance limits must be determined empirically on the explicitly selected physical GPU.
 
 ---
 
-# General Decisions
+## Prefer Real Training Validation
 
-## Keep DirectML Changes Close to Upstream
+Synthetic and short-running tests are useful for development and regression testing.
 
-DirectML support should modify as little of the original MiniMind training logic as possible.
+They do not replace real training validation.
 
-Shared compatibility utilities are preferred over DirectML-specific copies of existing pipelines.
-
-## Separate Backend Compatibility From Training Logic
-
-Training algorithms should remain backend-independent whenever possible.
-
-Device resolution, DirectML initialization, model placement, and compatibility exceptions belong in shared infrastructure.
-
-## Accept CPU Fallbacks When Necessary
-
-CPU execution is acceptable when required for compatibility and when correctness is preserved.
-
-Current examples include:
+The validation strategy therefore combines:
 
 ```text
-AdamW unsupported operation → CPU fallback
-Reward model → CPU
+Unit tests
+    +
+Smoke tests
+    +
+Compatibility benchmarks
+    +
+Real training runs
 ```
 
-## Preserve MiniMind Checkpoint Semantics
+Each layer answers a different compatibility question.
 
-DirectML is an execution backend and must not introduce a separate checkpoint format.
+---
 
-Checkpoint compatibility depends on model architecture and training stage, not the execution device.
+# Documentation Responsibilities
+
+Project documentation is intentionally separated by purpose:
+
+```text
+roadmap.md
+    → planned milestones and remaining work
+
+update_log.md
+    → chronological development history
+
+project_memory.md
+    → durable architectural decisions and lessons
+
+directml_issues.md
+    → problems, causes, solutions, and decisions
+
+directml_limitations.md
+    → current unsupported operations and fallbacks
+
+directml_benchmarks.md
+    → experimental compatibility and performance results
+
+development-tools.md
+    → development and validation utilities
+
+directml_audit.md
+    → automatically generated compatibility audit
+```
+
+This separation should be preserved as the project evolves.

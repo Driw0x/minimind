@@ -1,82 +1,101 @@
-# DirectML Limitations
+# MiniMind — DirectML Limitations
 
-This document tracks unsupported, partially supported, and fallback
-operations identified while running and testing MiniMind on DirectML.
+This document tracks the current unsupported, partially supported, and fallback operations identified while running MiniMind on DirectML.
 
-The list reflects the current state of the DirectML adaptation and may
-evolve as additional training workflows and hardware configurations are tested.
+Detailed explanations of encountered problems, their causes, and implemented solutions are documented in [`directml_issues.md`](directml_issues.md).
 
-## Training
+Performance measurements are documented in [`directml_benchmarks.md`](directml_benchmarks.md).
 
-| Feature / Operation | Status | Workaround |
-| --- | --- | --- |
-| AdamW `aten::lerp.Scalar_out` | Partial | Automatic CPU fallback |
-| InternLM2 Reward Model causal mask | Unsupported | Reward Model runs on CPU |
-| `torch.compile` | Unsupported | Use `--use_compile 0` |
-| CUDA AMP / autocast | Not enabled | Standard DirectML execution path |
+---
 
-## Known fallbacks
+# Current Limitations
 
-### AdamW
+| Feature / Operation                | Status      | Workaround                       |
+| ---------------------------------- | ----------- | -------------------------------- |
+| AdamW `aten::lerp.Scalar_out`      | Partial     | Automatic CPU fallback           |
+| InternLM2 Reward Model causal mask | Unsupported | Reward Model runs on CPU         |
+| `torch.compile`                    | Unsupported | Use `--use_compile 0`            |
+| CUDA AMP / autocast                | Not enabled | Standard DirectML execution path |
 
-`aten::lerp.Scalar_out` is currently unsupported by the DirectML backend.
+---
 
-PyTorch automatically falls back to CPU, allowing training to continue.
-This may have a performance impact.
+# AdamW CPU Fallback
+
+The AdamW optimizer uses:
+
+```text
+aten::lerp.Scalar_out
+```
+
+which is not currently supported natively by the DirectML backend.
+
+`torch-directml` automatically falls back to CPU execution for this operation.
+
+Training remains functional, but the fallback may affect performance.
 
 The performance impact will be evaluated during M4.
 
-## Reward Model
+---
 
-The InternLM2 Reward Model used by GRPO, PPO and Agent RL cannot currently
-run entirely on DirectML because of an incompatibility in its causal-mask
-operations.
+# Reward Model
 
-MiniMind DirectML therefore uses:
+The InternLM2 Reward Model used by alignment workflows cannot currently execute entirely on DirectML because of incompatible causal-mask operations.
 
-- MiniMind policy: DirectML
-- MiniMind reference model: DirectML
-- Reward Model: CPU
+The current execution strategy is:
 
-This fallback is handled automatically by the training utilities.
+```text
+MiniMind policy          → DirectML
+MiniMind reference model → DirectML
+Reward Model             → CPU
+```
 
-## torch.compile
+Required inputs are moved to CPU before reward-model inference, and reward values are transferred back to the training device when necessary.
 
-`torch.compile` is currently disabled when DirectML is selected.
+This fallback is handled by the shared training utilities.
 
-Use:
+---
 
-`--use_compile 0`
+# torch.compile
 
-## Mixed precision
+`torch.compile` is currently unsupported for the DirectML training path.
 
-The current mixed-precision implementation relies on CUDA AMP/autocast and
-is therefore not enabled for the DirectML training path.
+When DirectML is selected, compilation should remain disabled:
 
-## Training robustness
+```text
+--use_compile 0
+```
 
-### Empty distillation masks
+---
 
-Some truncated SFT samples may contain no supervised tokens within the
-configured sequence length.
+# Mixed Precision
 
-This previously caused the distillation KL-divergence computation to fail
-when receiving empty logits.
+The upstream mixed-precision path relies on CUDA AMP/autocast.
 
-The distillation loss now handles empty token selections safely by returning
-a zero loss connected to the computation graph.
+CUDA AMP is therefore not enabled for DirectML.
 
-## Performance considerations
+DirectML currently uses the standard execution path without CUDA-specific automatic mixed precision.
 
-CPU fallbacks allow unsupported operations to remain functional but may
-reduce training performance.
+---
 
-The performance impact of these fallbacks has not yet been quantified.
+# Performance Considerations
+
+CPU fallbacks preserve functionality but may reduce training performance.
+
+The practical impact has not yet been fully quantified.
 
 M4 — Performance & Stability will evaluate:
 
-- GPU memory usage;
-- training throughput;
-- CPU fallback frequency;
-- performance impact of CPU fallbacks;
-- longer training runs and stability.
+* GPU memory usage;
+* training throughput;
+* CPU fallback frequency;
+* performance impact of CPU fallbacks;
+* longer training runs;
+* runtime stability.
+
+---
+
+# Scope
+
+This document only tracks limitations that remain relevant to the current DirectML implementation.
+
+Resolved implementation bugs and robustness issues should be documented in [`directml_issues.md`](directml_issues.md) and [`update_log.md`](update_log.md) rather than retained as active DirectML limitations.
