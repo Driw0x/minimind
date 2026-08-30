@@ -169,6 +169,28 @@ The initial benchmark remains useful as historical development data because it d
 
 ---
 
+# Benchmark vs Real Training
+
+A configuration passing the compatibility benchmark is not guaranteed to remain stable during a complete training run.
+
+The benchmark only executes a short training workload. Its purpose is to identify configurations that fail immediately or are clearly incompatible with the tested DirectML environment.
+
+A complete training run may behave differently because it runs for significantly longer and may encounter different memory and execution conditions.
+
+Therefore:
+
+```text
+Benchmark PASS
+    ≠
+Guaranteed full-training stability
+```
+
+Benchmark results should be treated as compatibility indicators rather than guaranteed safe training configurations.
+
+The final `batch_size` and `max_seq_len` should always be validated with an actual training run.
+
+---
+
 # Configuration Selection
 
 The final DirectML training configuration should balance:
