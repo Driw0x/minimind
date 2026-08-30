@@ -10,7 +10,7 @@ nltk==3.8
 numpy==1.26.4
 openai==1.59.6
 psutil==5.9.8
-protobuf==6.33.5
+protobuf==5.28.3
 pydantic==2.11.5
 rich==13.7.1
 scikit_learn==1.5.1
