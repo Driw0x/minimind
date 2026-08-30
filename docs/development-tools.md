@@ -95,6 +95,20 @@ checkpoints/    # Training resume checkpoints
 This utility is intended to simplify sequential validation and execution
 of the DirectML training pipeline on Windows.
 
+`train_all.ps1` uses trainer-specific batch-size, sequence-length, and
+gradient-accumulation settings instead of applying one shared
+configuration to every stage. It also passes:
+
+``` text
+--save_interval 100
+```
+
+to refresh the latest resume checkpoint every 100 iterations.
+
+See [`training_commands.md`](training_commands.md) for the complete
+per-trainer configuration table and the `--from_resume 1` recovery
+commands.
+
 ------------------------------------------------------------------------
 
 ## Real Training Benchmark

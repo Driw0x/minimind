@@ -207,6 +207,7 @@ minimind/
 │   ├── directml_limitations.md
 │   ├── project_memory.md
 │   ├── roadmap.md
+│   ├── training_commands.md
 │   └── update_log.md
 │
 ├── images/                  # Project images and resources
@@ -257,6 +258,8 @@ maintained separately in `docs/`.
     deterministic test fixture generation, sequential training with
     `train_all.ps1`, real-training benchmarking, bounded runs, and the
     Python cross-trainer smoke runner.
+-   [Training commands](docs/training_commands.md) --- per-trainer
+    training configurations, periodic checkpoints, and resume commands.
 
 ### Project history and memory
 

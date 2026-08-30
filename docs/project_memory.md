@@ -644,3 +644,42 @@ DPO remains previously validated but outside this specific runner.
 ### Decision
 
 The `9/9` result is the final M4 cross-trainer smoke reference.
+
+------------------------------------------------------------------------
+
+# M5 Training Execution
+
+The full sequential workflow keeps the upstream trainer configurations
+separate from the sustained DirectML validation baseline.
+
+The M4 validated pretraining baseline remains:
+
+``` text
+batch_size = 8
+max_seq_len = 340
+accumulation_steps = 8
+```
+
+For full training, `train_all.ps1` uses the trainer-specific target
+values documented in [`training_commands.md`](training_commands.md).
+The DirectML MoE stages keep a conservative physical batch size.
+
+Long training stages also refresh their latest resume checkpoint every
+100 iterations with:
+
+``` text
+--save_interval 100
+```
+
+An interrupted stage can be continued from that checkpoint with:
+
+``` text
+--from_resume 1
+```
+
+### Decision
+
+Upstream trainer defaults must not be presented as sustained DirectML
+validation results. Periodic resume checkpoints are retained for long
+training runs.
+

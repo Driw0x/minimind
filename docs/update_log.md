@@ -271,3 +271,15 @@ Passed: 9/9
 
 M4 is complete. The project now moves to **M5 --- Project
 Finalization**.
+
+------------------------------------------------------------------------
+
+# M5 --- Project Finalization
+
+-   Added trainer-specific batch-size, sequence-length, and accumulation
+    settings to the sequential training workflow, while keeping the M4
+    `8 × 340` configuration documented as the sustained DirectML
+    pretraining baseline.
+-   Added automatic resume checkpoint refresh every 100 iterations and
+    documented interrupted-training recovery with `--from_resume 1`.
+

@@ -124,11 +124,12 @@ viability investigation.
 
 -   [ ] Apply identified performance optimizations
 -   [ ] Finalize installation documentation
--   [ ] Document supported training workflows
+-   [x] Document supported training workflows
 -   [ ] Add troubleshooting documentation
 -   [ ] Clean up remaining CUDA assumptions
 -   [ ] Validate the project from a fresh clone
 -   [ ] Publish a reproducible DirectML-ready configuration
+-   [x] Document periodic checkpoint and resume workflow
 
 ### If DirectML training remains impractical
 

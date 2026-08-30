@@ -37,52 +37,95 @@ $DType = "float16"
 
 $HiddenSize = 768
 $NumHiddenLayers = 8
-$MaxSeqLen = 340
 
 $DirectMLLossScale = 1024
 $DirectMLAdamEps = "1e-4"
+$SaveInterval = 100
 
 $UseCompile = 0
 
 
 # ------------------------------------------------------------
-# Dense configuration
+# Trainer configurations
 #
-# M4 validated configuration.
-# Effective batch size = 8 * 8 = 64.
+# Matches docs/training_commands.md:
+#
+# Trainer        Batch   MaxSeqLen   Accumulation
+# Pretrain       32      340         8
+# Full SFT       16      768         1
+# LoRA           32      340         1
+# DPO             4     1024         1
+# Distillation   32      340         1
+# GRPO            2      768         1
+# PPO             2      768         1
+# Agent           2     1024         1
+#
+# IMPORTANT:
+# These are the trainer-specific target values documented for the
+# full workflow. The sustained DirectML pretraining baseline remains
+# 8 / 340 / accumulation 8 and should not be confused with this table.
 # ------------------------------------------------------------
 
-$DenseBatchSize = 8
-$DenseAccumulationSteps = 8
+# Pretrain
+$PretrainBatchSize = 32
+$PretrainMaxSeqLen = 340
+$PretrainAccumulationSteps = 8
+
+# Full SFT
+$FullSftBatchSize = 16
+$FullSftMaxSeqLen = 768
+$FullSftAccumulationSteps = 1
+
+# LoRA
+$LoraBatchSize = 32
+$LoraMaxSeqLen = 340
+$LoraAccumulationSteps = 1
+
+# DPO (upstream trainer defaults)
+$DpoBatchSize = 4
+$DpoMaxSeqLen = 1024
+$DpoAccumulationSteps = 1
+
+# Distillation
+$DistillationBatchSize = 32
+$DistillationMaxSeqLen = 340
+$DistillationAccumulationSteps = 1
+
+# GRPO
+$GrpoBatchSize = 2
+$GrpoMaxSeqLen = 768
+$GrpoAccumulationSteps = 1
+
+# PPO
+$PpoBatchSize = 2
+$PpoMaxSeqLen = 768
+$PpoAccumulationSteps = 1
+
+# Agent
+$AgentBatchSize = 2
+$AgentMaxSeqLen = 1024
+$AgentAccumulationSteps = 1
 
 
 # ------------------------------------------------------------
-# MoE configuration
+# MoE DirectML override
 #
-# The MoE model is significantly larger than the Dense model.
-# Keep a conservative micro-batch while preserving the same
-# effective batch size:
+# Matches docs/training_commands.md:
 #
-#   1 * 64 = 64
+# Trainer          Batch   MaxSeqLen   Accumulation
+# MoE Pretrain       1      340         64
+# MoE Full SFT       1      768         64
 #
-# This configuration has not yet been benchmarked as extensively
-# as the Dense M4 configuration.
+# These values are a DirectML safety override, not upstream defaults.
 # ------------------------------------------------------------
 
-$MoeBatchSize = 1
-$MoeAccumulationSteps = 64
+$MoePretrainBatchSize = 1
+$MoePretrainMaxSeqLen = 340
+$MoePretrainAccumulationSteps = 64
 
-
-# ------------------------------------------------------------
-# Distillation configuration
-#
-# Both Dense student and MoE teacher are resident in memory.
-# Use the conservative MoE micro-batch configuration.
-# ------------------------------------------------------------
-
-$DistillationBatchSize = 1
-$DistillationAccumulationSteps = 64
-
+$MoeFullSftBatchSize = 1
+$MoeFullSftMaxSeqLen = 768
+$MoeFullSftAccumulationSteps = 64
 
 function Run-Training {
     param (
@@ -137,9 +180,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $PretrainBatchSize,
+        "--max_seq_len", $PretrainMaxSeqLen,
+        "--accumulation_steps", $PretrainAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "none",
@@ -166,9 +210,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $FullSftBatchSize,
+        "--max_seq_len", $FullSftMaxSeqLen,
+        "--accumulation_steps", $FullSftAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "pretrain",
@@ -192,9 +237,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 1,
-        "--batch_size", $MoeBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $MoeAccumulationSteps,
+        "--batch_size", $MoePretrainBatchSize,
+        "--max_seq_len", $MoePretrainMaxSeqLen,
+        "--accumulation_steps", $MoePretrainAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "none",
@@ -221,9 +267,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 1,
-        "--batch_size", $MoeBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $MoeAccumulationSteps,
+        "--batch_size", $MoeFullSftBatchSize,
+        "--max_seq_len", $MoeFullSftMaxSeqLen,
+        "--accumulation_steps", $MoeFullSftAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "pretrain",
@@ -247,9 +294,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $LoraBatchSize,
+        "--max_seq_len", $LoraMaxSeqLen,
+        "--accumulation_steps", $LoraAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "full_sft",
@@ -277,9 +325,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $DpoBatchSize,
+        "--max_seq_len", $DpoMaxSeqLen,
+        "--accumulation_steps", $DpoAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--from_weight", "full_sft",
         "--use_compile", $UseCompile
     )
@@ -305,8 +354,9 @@ Run-Training `
         "--device", $Device,
         "--dtype", $DType,
         "--batch_size", $DistillationBatchSize,
-        "--max_seq_len", $MaxSeqLen,
+        "--max_seq_len", $DistillationMaxSeqLen,
         "--accumulation_steps", $DistillationAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
 
@@ -337,9 +387,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $GrpoBatchSize,
+        "--max_seq_len", $GrpoMaxSeqLen,
+        "--accumulation_steps", $GrpoAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "full_sft",
@@ -360,9 +411,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $PpoBatchSize,
+        "--max_seq_len", $PpoMaxSeqLen,
+        "--accumulation_steps", $PpoAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "full_sft",
@@ -383,9 +435,10 @@ Run-Training `
         "--hidden_size", $HiddenSize,
         "--num_hidden_layers", $NumHiddenLayers,
         "--use_moe", 0,
-        "--batch_size", $DenseBatchSize,
-        "--max_seq_len", $MaxSeqLen,
-        "--accumulation_steps", $DenseAccumulationSteps,
+        "--batch_size", $AgentBatchSize,
+        "--max_seq_len", $AgentMaxSeqLen,
+        "--accumulation_steps", $AgentAccumulationSteps,
+        "--save_interval", $SaveInterval,
         "--directml_loss_scale", $DirectMLLossScale,
         "--directml_adam_eps", $DirectMLAdamEps,
         "--from_weight", "full_sft",
