@@ -127,7 +127,11 @@ class Attention(nn.Module):
         else:
             scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
             if self.is_causal: scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
-            if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            # if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            if attention_mask is not None:
+                mask_value = torch.finfo(scores.dtype).min
+
+                scores = scores.masked_fill(attention_mask.unsqueeze(1).unsqueeze(2) == 0, mask_value,)
             output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)
         output = self.resid_dropout(self.o_proj(output))
@@ -156,23 +160,119 @@ class MOEFeedForward(nn.Module):
     def forward(self, x):
         batch_size, seq_len, hidden_dim = x.shape
         x_flat = x.view(-1, hidden_dim)
+
         scores = F.softmax(self.gate(x_flat), dim=-1)
-        topk_weight, topk_idx = torch.topk(scores, k=self.config.num_experts_per_tok, dim=-1, sorted=False)
-        if self.config.norm_topk_prob: topk_weight = topk_weight / (topk_weight.sum(dim=-1, keepdim=True) + 1e-20)
+
+        # --------------------------------------------------------
+        # DirectML-compatible MoE routing
+        #
+        # DirectML does not fully support the scatter operations
+        # used internally by topk/index_add backward.
+        #
+        # We therefore:
+        #   1. select experts from detached router scores,
+        #   2. rebuild differentiable routing weights with masks,
+        #   3. avoid indexed writes entirely.
+        #
+        # CPU/CUDA keep the original sparse implementation below.
+        # --------------------------------------------------------
+        if x.device.type == "privateuseone":
+            expert_ids = torch.arange(
+                self.config.num_experts,
+                device=x.device,
+            )
+
+            # Expert selection itself is non-differentiable anyway.
+            _, topk_idx = torch.topk(
+                scores.detach(),
+                k=self.config.num_experts_per_tok,
+                dim=-1,
+                sorted=False,
+            )
+
+            # [tokens, top_k, experts]
+            selected = (
+                topk_idx.unsqueeze(-1) == expert_ids
+            ).to(scores.dtype)
+
+            # [tokens, experts]
+            routing_mask = selected.sum(dim=1)
+
+            # Keep gradients through the selected router probabilities.
+            routing_weights = scores * routing_mask
+
+            if self.config.norm_topk_prob:
+                routing_weights = routing_weights / (
+                    routing_weights.sum(dim=-1, keepdim=True) + 1e-20
+                )
+
+            y = torch.zeros_like(x_flat)
+
+            # No boolean advanced indexing and no index_add_.
+            for i, expert in enumerate(self.experts):
+                expert_output = expert(x_flat)
+                weight = routing_weights[:, i:i + 1]
+
+                y = y + expert_output * weight
+
+            if self.training and self.config.router_aux_loss_coef > 0:
+                load = routing_mask.float().mean(0)
+
+                self.aux_loss = (
+                    load * scores.mean(0)
+                ).sum() * self.config.num_experts * self.config.router_aux_loss_coef
+            else:
+                self.aux_loss = scores.new_zeros(1).squeeze()
+
+            return y.view(batch_size, seq_len, hidden_dim)
+
+        # --------------------------------------------------------
+        # Original sparse MoE path for CPU / CUDA
+        # --------------------------------------------------------
+        topk_weight, topk_idx = torch.topk(
+            scores,
+            k=self.config.num_experts_per_tok,
+            dim=-1,
+            sorted=False,
+        )
+
+        if self.config.norm_topk_prob:
+            topk_weight = topk_weight / (
+                topk_weight.sum(dim=-1, keepdim=True) + 1e-20
+            )
+
         y = torch.zeros_like(x_flat)
+
         for i, expert in enumerate(self.experts):
-            mask = (topk_idx == i)
+            mask = topk_idx == i
+
             if mask.any():
                 token_idx = mask.any(dim=-1).nonzero().flatten()
                 weight = topk_weight[mask].view(-1, 1)
-                y.index_add_(0, token_idx, (expert(x_flat[token_idx]) * weight).to(y.dtype))
+
+                y.index_add_(
+                    0,
+                    token_idx,
+                    (expert(x_flat[token_idx]) * weight).to(y.dtype),
+                )
+
             elif self.training:
-                y[0, 0] += 0 * sum(p.sum() for p in expert.parameters())
+                y[0, 0] += 0 * sum(
+                    p.sum() for p in expert.parameters()
+                )
+
         if self.training and self.config.router_aux_loss_coef > 0:
-            load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)
-            self.aux_loss = (load * scores.mean(0)).sum() * self.config.num_experts * self.config.router_aux_loss_coef
+            load = F.one_hot(
+                topk_idx,
+                self.config.num_experts,
+            ).float().mean(0)
+
+            self.aux_loss = (
+                load * scores.mean(0)
+            ).sum() * self.config.num_experts * self.config.router_aux_loss_coef
         else:
             self.aux_loss = scores.new_zeros(1).squeeze()
+
         return y.view(batch_size, seq_len, hidden_dim)
 
 class MiniMindBlock(nn.Module):

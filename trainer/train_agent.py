@@ -239,6 +239,8 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
     return rewards
 
 # ================================ 工具与 Reward = End ================================
+def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
+
 def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False, remaining_steps=0):
     last_step = start_step
     executed_steps = 0
@@ -278,13 +280,18 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
 
         model_unwrapped = model.module if isinstance(model, DistributedDataParallel) else model
         with autocast_ctx:
-            res = model_unwrapped(input_ids, attention_mask=full_mask)
+            # res = model_unwrapped(input_ids, attention_mask=full_mask)
+            res = model_unwrapped(input_ids)
+
             aux_loss = res.aux_loss if lm_config.use_moe else torch.tensor(0.0, device=args.device)
-            logits = res.logits[:, :-1, :]
+            # logits = res.logits[:, :-1, :]
+            # per_token_logps = F.log_softmax(logits, dim=-1).gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            logits = res.logits[:, :-1, :].float()
             per_token_logps = F.log_softmax(logits, dim=-1).gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
 
         with torch.no_grad():
-            ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=full_mask)
+            # ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=full_mask)
+            ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=None)
 
         completion_mask = full_response_masks[:, 1:]
         is_eos = (input_ids[:, 1:] == tokenizer.eos_token_id) & completion_mask.bool()
@@ -320,17 +327,41 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         std_r = grouped_rewards.std(dim=1, unbiased=False).repeat_interleave(args.num_generations)
         advantages = (rewards - mean_r) / (std_r + 1e-4)
 
-        kl_div = ref_per_token_logps - per_token_logps
-        per_token_kl = torch.exp(kl_div) - kl_div - 1
-        ratio = torch.exp(per_token_logps - old_per_token_logps)
+        # kl_div = ref_per_token_logps - per_token_logps
+        # per_token_kl = torch.exp(kl_div) - kl_div - 1
+        # ratio = torch.exp(per_token_logps - old_per_token_logps)
+
+        # Keep numerically sensitive RL calculations in FP32.
+        policy_logps = per_token_logps.float()
+        reference_logps = ref_per_token_logps.float()
+        behavior_logps = old_per_token_logps.float()
+
+        kl_div = reference_logps - policy_logps
+        per_token_kl = torch.exp(torch.clamp(kl_div, min=-20.0, max=20.0)) - kl_div - 1.0
+
+        log_ratio = policy_logps - behavior_logps
+        ratio = torch.exp(torch.clamp(log_ratio, min=-20.0, max=20.0))
+
+        # if args.loss_type == "cispo":
+        #     clamped_ratio = torch.clamp(ratio, max=args.epsilon_high).detach()
+        #     per_token_loss = -(clamped_ratio * advantages.unsqueeze(1) * per_token_logps - args.beta * per_token_kl)
+        # else:
+        #     clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
+        #     per_token_loss1 = ratio * advantages.unsqueeze(1)
+        #     per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
+        #     per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
         if args.loss_type == "cispo":
-            clamped_ratio = torch.clamp(ratio, max=args.epsilon_high).detach()
-            per_token_loss = -(clamped_ratio * advantages.unsqueeze(1) * per_token_logps - args.beta * per_token_kl)
+            clamped_ratio = torch.clamp(ratio, max=args.epsilon_high,).detach()
+
+            per_token_loss = -(clamped_ratio * advantages.float().unsqueeze(1) * policy_logps - args.beta * per_token_kl)
         else:
-            clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
-            per_token_loss1 = ratio * advantages.unsqueeze(1)
-            per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
+            clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon,)
+
+            per_token_loss1 = ratio * advantages.float().unsqueeze(1)
+            per_token_loss2 = clipped_ratio * advantages.float().unsqueeze(1)
+
             per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
+
         policy_loss = (((per_token_loss * completion_mask).sum(dim=1)[valid_rows] / token_counts[valid_rows].clamp(min=1)).mean()
                        if valid_rows.any() else per_token_loss.sum() * 0.0)
         loss = (policy_loss + aux_loss) / args.accumulation_steps
@@ -498,7 +529,7 @@ if __name__ == "__main__":
         lr=args.learning_rate,
         eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
     )
-    def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
+    # def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler, collate_fn=collate_fn)
     iters = len(loader_for_count)
     total_optimizer_steps = math.ceil(iters / args.accumulation_steps) * args.epochs

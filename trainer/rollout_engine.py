@@ -27,7 +27,8 @@ def compute_per_token_logps(model, input_ids: Tensor, n_keep: int, attention_mas
         return input_ids.new_empty((input_ids.size(0), 0), dtype=torch.float32)
     unwrapped = model.module if isinstance(model, DistributedDataParallel) else model
     input_ids = input_ids.detach().clone() if input_ids.is_inference() else input_ids
-    logits = unwrapped(input_ids, attention_mask=attention_mask, logits_to_keep=n_keep + 1).logits[:, :-1, :]
+    # logits = unwrapped(input_ids, attention_mask=attention_mask, logits_to_keep=n_keep + 1).logits[:, :-1, :]
+    logits = unwrapped(input_ids, attention_mask=attention_mask, logits_to_keep=n_keep + 1).logits[:, :-1, :].float()
     per_token_logps = []
     for logits_row, ids_row in zip(logits, input_ids[:, -n_keep:]):
         ids_row = ids_row.detach().clone() if ids_row.is_inference() else ids_row
