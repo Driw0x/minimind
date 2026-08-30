@@ -132,15 +132,40 @@ Results obtained on the integrated GPU and dedicated GPU should not be combined 
 
 # Reference Benchmark
 
-A new benchmark should be used to establish the reference configuration after explicit selection of the dedicated GPU.
+After explicitly selecting the dedicated GPU, the compatibility benchmark was rerun on:
 
-The reference results should record at minimum:
+```text
+Device: directml:1
+```
+
+The resulting compatibility matrix was:
 
 | Batch size | Sequence length | Result |
 | ---------: | --------------: | ------ |
-|          — |               — | —      |
+|          1 |              64 | PASS   |
+|          1 |             128 | PASS   |
+|          1 |             256 | PASS   |
+|          1 |             340 | PASS   |
+|          2 |             128 | PASS   |
+|          2 |             256 | PASS   |
+|          2 |             340 | PASS   |
+|          4 |             128 | PASS   |
+|          4 |             256 | PASS   |
+|          4 |             340 | PASS   |
+|          8 |             128 | PASS   |
+|          8 |             256 | PASS   |
+|          8 |             340 | PASS   |
+|         16 |             128 | PASS   |
+|         16 |             256 | PASS   |
+|         16 |             340 | PASS   |
+|         32 |             128 | PASS   |
+|         32 |             256 | FAIL   |
 
-The previous benchmark should then remain only as historical development data or be replaced if no longer useful.
+The benchmark stopped testing larger sequence lengths for batch size `32` after `32 × 256` failed.
+
+This establishes a substantially higher validated compatibility range on the explicitly selected dedicated GPU than the initial benchmark suggested. In particular, all tested configurations up to `16 × 340` passed, while `32 × 128` passed and `32 × 256` did not.
+
+The initial benchmark remains useful as historical development data because it documents the behavior observed before physical GPU selection was controlled.
 
 ---
 
