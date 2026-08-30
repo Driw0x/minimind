@@ -97,7 +97,7 @@ Validate the main MiniMind training stages with DirectML.
 - [x] Validate supervised fine-tuning (SFT)
 - [x] Validate LoRA training
 - [x] Validate additional training stages supported by MiniMind
-- [ ] Validate checkpoint compatibility between training stages
+- [x] Validate checkpoint compatibility between training stages
 - [ ] Document unsupported or partially supported DirectML operations
 
 ### M4 — Performance & Stability
