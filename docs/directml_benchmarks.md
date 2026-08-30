@@ -215,25 +215,59 @@ Benchmarking should be repeated when relevant execution conditions change, inclu
 
 ---
 
-# Real Training Observation
+# Real Training Performance
 
-The compatibility benchmark only determines whether a configuration can execute successfully. It does not determine whether that configuration is practical for full-scale training.
+Passing the compatibility benchmark does not imply that a configuration is efficient for full-scale training.
 
-A real pretraining run using:
+Real pretraining benchmarks were therefore performed using the actual MiniMind dataset and training pipeline.
 
-- `batch_size = 32`
-- `max_seq_len = 340`
+The tested environment used:
 
-executed successfully on DirectML.
+* Dataset samples: `1,270,238`
+* Max sequence len: `340`
+* Accumulation steps: `8`
+* Warmup steps: `8`
+* Measured steps: `16`
+* Device: `directml:1`
 
-However, the observed throughput was approximately:
+## Batch Size 8
 
-- 5.9 seconds per step;
-- 158780 steps per epoch;
-- 10.9 days per epoch.
+The real training benchmark with `batch_size = 8` and `max_seq_len = 340` showed training steps of approximately `5.5–6.0 seconds per step` after the initial warmup.
 
-This confirms that a configuration can be technically compatible while still being impractical for full-scale training.
+This configuration successfully executed the real training workload.
 
-Compatibility benchmark results should therefore not be interpreted as performance recommendations.
+## Batch Size 16
+
+The same benchmark with `batch_size = 16` and `max_seq_len = 340` showed training steps of approximately `11 seconds per step` after the initial warmup.
+
+Doubling the batch size therefore approximately doubled the execution time per training step.
+
+Because each step also processes approximately twice as many samples, increasing the batch size does not provide a significant throughput improvement in this DirectML environment.
+
+## Practical Implication
+
+The compatibility benchmark demonstrated that configurations up to `16 × 340` are technically supported on the selected dedicated GPU.
+
+However, the real training measurements show that larger batch sizes do not necessarily improve effective training throughput.
+
+Conceptually:
+
+`Larger batch size → more samples per step + longer step duration → little or no throughput improvement`
+
+The optimal DirectML configuration should therefore be selected from real training performance rather than compatibility limits alone.
+
+In the tested environment, `batch_size = 8` provides a more conservative operating point while maintaining approximately the same effective throughput as `batch_size = 16`.
+
+---
+
+# DirectML Optimizer Limitation
+
+During real training, PyTorch reports a DirectML fallback for `aten::lerp.Scalar_out`.
+
+This operation is currently unsupported by the DirectML backend and falls back to CPU execution during the AdamW optimizer step.
+
+The fallback does not prevent training from running, but it may introduce additional synchronization and performance overhead.
+
+Therefore, measured DirectML training performance includes this CPU fallback and should not be interpreted as pure GPU execution performance.
 
 ---
