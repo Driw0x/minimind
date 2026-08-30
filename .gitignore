@@ -37,3 +37,7 @@ htmlcov/
 
 # Jupyter
 .ipynb_checkpoints/
+
+dataset/*.jsonl
+out/
+checkpoints/

@@ -10,6 +10,7 @@ import warnings
 from transformers import AutoTokenizer, AutoModelForCausalLM, Qwen3Config, Qwen3ForCausalLM, Qwen3MoeConfig, Qwen3MoeForCausalLM
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from model.model_lora import apply_lora, merge_lora
+from trainer.trainer_utils import get_device, is_directml_device
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -17,10 +18,10 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
     MiniMindConfig.register_for_auto_class()
     MiniMindForCausalLM.register_for_auto_class("AutoModelForCausalLM")
     lm_model = MiniMindForCausalLM(lm_config)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    state_dict = torch.load(torch_path, map_location=device)
+    device = get_device("auto")
+    state_dict = torch.load(torch_path, map_location='cpu')
     lm_model.load_state_dict(state_dict, strict=False)
-    lm_model = lm_model.to(dtype)  # 转换模型权重精度
+    lm_model = lm_model.to(dtype if not is_directml_device(device) else torch.float32)  # 转换模型权重精度
     model_params = sum(p.numel() for p in lm_model.parameters() if p.requires_grad)
     print(f'模型参数: {model_params / 1e6} 百万 = {model_params / 1e9} B (Billion)')
     lm_model.save_pretrained(transformers_path, safe_serialization=False)
@@ -38,8 +39,8 @@ def convert_torch2transformers_minimind(torch_path, transformers_path, dtype=tor
 
 # QwenForCausalLM/LlamaForCausalLM结构兼容生态
 def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float16):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    state_dict = torch.load(torch_path, map_location=device)
+    device = get_device("auto")
+    state_dict = torch.load(torch_path, map_location='cpu')
     common_config = {
         "vocab_size": lm_config.vocab_size,
         "hidden_size": lm_config.hidden_size,
@@ -79,7 +80,7 @@ def convert_torch2transformers(torch_path, transformers_path, dtype=torch.float1
             state_dict = new_sd
 
     qwen_model.load_state_dict(state_dict, strict=True)
-    qwen_model = qwen_model.to(dtype)  # 转换模型权重精度
+    qwen_model = qwen_model.to(dtype if not is_directml_device(device) else torch.float32)  # 转换模型权重精度
     qwen_model.save_pretrained(transformers_path)
     model_params = sum(p.numel() for p in qwen_model.parameters() if p.requires_grad)
     print(f'模型参数: {model_params / 1e6} 百万 = {model_params / 1e9} B (Billion)')
@@ -103,9 +104,9 @@ def convert_transformers2torch(transformers_path, torch_path):
 
 
 def convert_merge_base_lora(base_torch_path, lora_path, merged_torch_path):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    device = get_device("auto")
     lm_model = MiniMindForCausalLM(lm_config).to(device)
-    state_dict = torch.load(base_torch_path, map_location=device)
+    state_dict = torch.load(base_torch_path, map_location='cpu')
     lm_model.load_state_dict(state_dict, strict=False)
     apply_lora(lm_model)
     merge_lora(lm_model, lora_path, merged_torch_path)

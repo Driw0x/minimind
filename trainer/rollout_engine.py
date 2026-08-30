@@ -18,6 +18,7 @@ from typing import List, Optional, Tuple
 from torch import Tensor
 from torch.nn.parallel import DistributedDataParallel
 from transformers import AutoTokenizer
+from trainer.trainer_utils import get_device
 
 
 # ===== 计算每个 token 的 logprob =====
@@ -62,10 +63,10 @@ class RolloutEngine(ABC):
 
 # ===== PyTorch 原生推理引擎 =====
 class TorchRolloutEngine(RolloutEngine):
-    def __init__(self, policy_model: torch.nn.Module, tokenizer, device: str = "cuda", autocast_ctx=None):
+    def __init__(self, policy_model: torch.nn.Module, tokenizer, device: str = "auto", autocast_ctx=None):
         self.policy_model = policy_model
         self.tokenizer = tokenizer
-        self.device = device
+        self.device = get_device(device)
         self.autocast_ctx = autocast_ctx
     
     def rollout(self, prompt_ids: Tensor, attention_mask: Tensor, num_generations: int, max_new_tokens: int, temperature: float = 0.8) -> RolloutResult:
@@ -179,7 +180,7 @@ class SGLangRolloutEngine(RolloutEngine):
                 unwrapped = model.module if isinstance(model, DistributedDataParallel) else model
                 unwrapped = getattr(unwrapped, '_orig_mod', unwrapped)
                 abs_path = os.path.abspath(self.shared_ckpt_path)
-                state_dict = {k: v.detach().half().cpu() for k, v in unwrapped.state_dict().items()}
+                state_dict = {k: v.detach().cpu().half() for k, v in unwrapped.state_dict().items()}
                 unwrapped.save_pretrained(abs_path, state_dict=state_dict, safe_serialization=False)
                 self.tokenizer.save_pretrained(abs_path)
                 resp = self.http.post(f"{self.base_url}/update_weights_from_disk", json={"model_path": abs_path}, timeout=self.timeout)
@@ -210,7 +211,7 @@ def create_rollout_engine(
     engine_type: str = "torch",
     policy_model: torch.nn.Module = None,
     tokenizer = None,
-    device: str = "cuda",
+    device: str = "auto",
     autocast_ctx = None,
     sglang_base_url: str = None,
     sglang_model_path: str = None,

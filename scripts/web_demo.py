@@ -8,6 +8,7 @@ import torch
 import numpy as np
 import streamlit as st
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
+from trainer.trainer_utils import get_device, is_directml_device, setup_seed
 
 st.set_page_config(page_title="MiniMind", initial_sidebar_state="collapsed")
 
@@ -67,7 +68,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-device = "cuda" if torch.cuda.is_available() else "cpu"
+device = get_device("auto")
 
 # 多语言文本
 LANG_TEXTS = {
@@ -205,7 +206,8 @@ def load_model_tokenizer(model_path):
         model_path,
         trust_remote_code=True
     )
-    model = model.half().eval().to(device)
+    model = model.eval().to(device)
+    if not is_directml_device(device): model = model.half()
     return model, tokenizer
 
 
@@ -298,15 +300,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
-def setup_seed(seed):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
 
 
 def main():
