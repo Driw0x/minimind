@@ -228,7 +228,8 @@ minimind/
 ├── dataset/                 # Dataset loading and training data
 │
 ├── docs/                    # Project and DirectML documentation
-│   ├── original/            # Original MiniMind documentation
+│   └── original/            # Original MiniMind documentation
+│   ├── development-tools.md
 │   ├── directml_audit.md
 │   ├── directml-limitations.md
 │   ├── project_memory.md
@@ -250,6 +251,18 @@ minimind/
 ```
 
 Generated model weights and training checkpoints are local runtime artifacts and are not intended to be tracked by Git.
+
+---
+
+## Development documentation
+
+Additional documentation is available for the DirectML adaptation and development tools:
+
+- [DirectML limitations](docs/directml-limitations.md) — known DirectML limitations, unsupported operations, and CPU fallbacks.
+- [DirectML audit](docs/directml_audit.md) — generated compatibility audit of CUDA-specific code and potential DirectML issues.
+- [Development tools](docs/development-tools.md) — usage of the DirectML audit and deterministic test fixture generation utilities.
+- [Project memory](docs/project_memory.md) — technical issues encountered during each milestone, their causes, and implemented solutions.
+- [Update log](docs/update_log.md) — chronological overview of the DirectML adaptation progress.
 
 ---
 
