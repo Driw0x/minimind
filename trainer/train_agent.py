@@ -24,7 +24,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoTokenizer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import AgentRLDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
 from trainer.rollout_engine import create_rollout_engine, compute_per_token_logps
 
 warnings.filterwarnings('ignore')
@@ -239,9 +239,13 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
     return rewards
 
 # ================================ 工具与 Reward = End ================================
-def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False):
+def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False, remaining_steps=0):
     last_step = start_step
+    executed_steps = 0
+    max_steps_reached = False
     for step, batch in enumerate(loader, start=start_step + 1):
+        last_step = step
+        executed_steps += 1
         messages_batch = batch['messages']
         tools_batch = batch['tools']
         gt_batch = batch['gt']
@@ -330,11 +334,28 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         policy_loss = (((per_token_loss * completion_mask).sum(dim=1)[valid_rows] / token_counts[valid_rows].clamp(min=1)).mean()
                        if valid_rows.any() else per_token_loss.sum() * 0.0)
         loss = (policy_loss + aux_loss) / args.accumulation_steps
-        loss.backward()
+        if directml_fp16:
+            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
+
+        backward_loss(
+            loss,
+            scaler,
+            args.device,
+            args.dtype,
+            args.directml_loss_scale
+        )
 
         if step % args.accumulation_steps == 0:
-            if args.grad_clip > 0: torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step(); scheduler.step(); optimizer.zero_grad()
+            optimizer_step(
+                model,
+                optimizer,
+                scaler,
+                args.grad_clip if args.grad_clip > 0 else float("inf"),
+                args.device,
+                args.dtype,
+                args.directml_loss_scale
+            )
+            scheduler.step()
 
         if step % args.log_interval == 0 or step == iters:
             pl = loss.item() * args.accumulation_steps
@@ -357,7 +378,7 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
             state_dict = raw_model.state_dict()
             torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler, scaler=scaler)
             model.train()
             del state_dict
 
@@ -366,10 +387,24 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         del per_token_logps, ref_per_token_logps
         del completions, rewards, grouped_rewards, mean_r, std_r, advantages, completion_mask
 
-    if last_step > start_step and last_step % args.accumulation_steps != 0:
-        if args.grad_clip > 0: torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-        optimizer.step(); scheduler.step(); optimizer.zero_grad()
+        if remaining_steps > 0 and executed_steps >= remaining_steps:
+            max_steps_reached = True
+            break
 
+    if last_step > start_step and last_step % args.accumulation_steps != 0:
+        optimizer_step(
+            model,
+            optimizer,
+            scaler,
+            args.grad_clip if args.grad_clip > 0 else float("inf"),
+            args.device,
+            args.dtype,
+            args.directml_loss_scale
+        )
+        scheduler.step()
+
+
+    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Agent RL")
@@ -383,6 +418,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
+    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="模型隐藏层维度")
@@ -424,6 +462,7 @@ if __name__ == "__main__":
 
     device_type = args.device.type
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    directml_fp16 = is_directml_fp16(args.device, args.dtype)
     autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
 
     wandb = None
@@ -433,9 +472,9 @@ if __name__ == "__main__":
         resume = 'must' if wandb_id else None
         wandb.init(project=args.wandb_project, name=f"Agent-RL-E{args.epochs}-B{args.batch_size}-LR{args.learning_rate}", id=wandb_id, resume=resume)
 
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
 
-    ref_model, _ = init_model(lm_config, args.from_weight, device=args.device)
+    ref_model, _ = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
     ref_model = ref_model.eval().requires_grad_(False)
 
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float32 if is_directml_device(args.device) else torch.float16)
@@ -453,7 +492,12 @@ if __name__ == "__main__":
     )
     train_ds = AgentRLDataset(args.data_path, tokenizer, max_length=lm_config.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    scaler = create_grad_scaler(args.device, args.dtype)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+    )
     def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler, collate_fn=collate_fn)
     iters = len(loader_for_count)
@@ -464,6 +508,11 @@ if __name__ == "__main__":
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
         optimizer.load_state_dict(ckp_data['optimizer'])
+        configure_optimizer_for_directml_fp16(
+            optimizer, args.device, args.dtype, args.directml_adam_eps
+        )
+        if ckp_data.get('scaler') is not None:
+            scaler.load_state_dict(ckp_data['scaler'])
         scheduler.load_state_dict(ckp_data['scheduler'])
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
@@ -478,17 +527,32 @@ if __name__ == "__main__":
         model = DistributedDataParallel(model, device_ids=[local_rank])
     rollout_engine.update_policy(model)
 
+    total_run_steps = 0
+
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"), collate_fn=collate_fn)
+
+        remaining_steps = (
+            args.max_steps - total_run_steps
+            if args.max_steps > 0
+            else 0
+        )
+
         if skip > 0:
             Logger(f'Epoch [{epoch+1}/{args.epochs}]: skip {start_step} steps')
-            rl_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang = (args.rollout_engine == "sglang"))
+            executed_steps, max_steps_reached = rl_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
         else:
-            rl_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang = (args.rollout_engine == "sglang"))
+            executed_steps, max_steps_reached = rl_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
+
+        total_run_steps += executed_steps
+
+        if max_steps_reached:
+            Logger(f'Maximum training steps reached: {total_run_steps}')
+            break
 
     if dist.is_initialized():
         dist.barrier()

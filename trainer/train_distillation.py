@@ -17,7 +17,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
 
 warnings.filterwarnings('ignore')
 
@@ -52,9 +52,11 @@ def distillation_loss(student_logits, teacher_logits, temperature=1.0, reduction
 
     return (temperature ** 2) * kl
 
-def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_step=0, wandb=None, alpha=0.0, temperature=1.0):
+def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_step=0, wandb=None, alpha=0.0, temperature=1.0, remaining_steps=0):
     start_time = time.time()
     last_step = start_step
+    executed_steps = 0
+    max_steps_reached = False
     
     if teacher_model is not None:
         teacher_model.eval()
@@ -62,6 +64,7 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
 
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         last_step = step
+        executed_steps += 1
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
         loss_mask = (labels[..., 1:] != -100).float()
@@ -108,14 +111,16 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
         # 3) 总损失 = alpha * CE + (1-alpha) * Distill
         loss = (alpha * ce_loss + (1 - alpha) * distill_loss) / args.accumulation_steps
 
-        scaler.scale(loss).backward()
+        if directml_fp16:
+            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
+
+        backward_loss(loss, scaler, args.device, args.dtype, args.directml_loss_scale)
 
         if step % args.accumulation_steps == 0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad(set_to_none=True)
+            optimizer_step(
+                model, optimizer, scaler, args.grad_clip,
+                args.device, args.dtype, args.directml_loss_scale
+            )
 
         if step % args.log_interval == 0 or step == iters:
             spend_time = time.time() - start_time
@@ -151,13 +156,18 @@ def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_st
 
         del input_ids, labels, loss_mask, res, student_logits, ce_loss, distill_loss, loss
 
-    if last_step > start_step and last_step % args.accumulation_steps != 0:
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad(set_to_none=True)
+        if remaining_steps > 0 and executed_steps >= remaining_steps:
+            max_steps_reached = True
+            break
 
+    if last_step > start_step and last_step % args.accumulation_steps != 0:
+        optimizer_step(
+            model, optimizer, scaler, args.grad_clip,
+            args.device, args.dtype, args.directml_loss_scale
+        )
+
+
+    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     # 模拟用moe模型蒸馏dense模型，也可以用更大teacher_hidden_size模型蒸馏更小student_hidden_size的
@@ -172,6 +182,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
+    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=100, help="模型保存间隔")
     parser.add_argument("--max_seq_len", type=int, default=340, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
@@ -207,6 +220,7 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = args.device.type
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    directml_fp16 = is_directml_fp16(args.device, args.dtype)
     autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
     
     # ========== 4. 配wandb ==========
@@ -219,16 +233,20 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
     # ========== 5. 定义学生和教师模型 ==========
-    model, tokenizer = init_model(lm_config_student, args.from_student_weight, device=args.device)
+    model, tokenizer = init_model(lm_config_student, args.from_student_weight, device=args.device, dtype=args.dtype)
     Logger(f'学生模型总参数量：{sum(p.numel() for p in model.parameters()) / 1e6:.3f} M')
-    teacher_model, _ = init_model(lm_config_teacher, args.from_teacher_weight, device=args.device)
+    teacher_model, _ = init_model(lm_config_teacher, args.from_teacher_weight, device=args.device, dtype=args.dtype)
     teacher_model.eval()
     teacher_model.requires_grad_(False)
     Logger(f'教师模型总参数量：{sum(p.numel() for p in teacher_model.parameters()) / 1e6:.3f} M')
     train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = torch.cuda.amp.GradScaler(enabled=(device_type == "cuda" and args.dtype == 'float16'))
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    scaler = create_grad_scaler(args.device, args.dtype)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+    )
     
     # ========== 6. 从ckp恢复状态 ==========
     start_epoch, start_step = 0, 0
@@ -236,6 +254,9 @@ if __name__ == "__main__":
         model.load_state_dict(ckp_data['model'])
         optimizer.load_state_dict(ckp_data['optimizer'])
         scaler.load_state_dict(ckp_data['scaler'])
+        configure_optimizer_for_directml_fp16(
+            optimizer, args.device, args.dtype, args.directml_adam_eps
+        )
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
@@ -249,17 +270,32 @@ if __name__ == "__main__":
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
     # ========== 8. 开始训练 ==========
+    total_run_steps = 0
+
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"))
-        if skip > 0: 
+
+        remaining_steps = (
+            args.max_steps - total_run_steps
+            if args.max_steps > 0
+            else 0
+        )
+
+        if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, len(loader) + skip, teacher_model, lm_config_student, start_step, wandb, args.alpha, args.temperature)
+            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader) + skip, teacher_model, lm_config_student, start_step, wandb, args.alpha, args.temperature, remaining_steps)
         else:
-            train_epoch(epoch, loader, len(loader), teacher_model, lm_config_student, 0, wandb, args.alpha, args.temperature)
+            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader), teacher_model, lm_config_student, 0, wandb, args.alpha, args.temperature, remaining_steps)
+
+        total_run_steps += executed_steps
+
+        if max_steps_reached:
+            Logger(f'Maximum training steps reached: {total_run_steps}')
+            break
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():

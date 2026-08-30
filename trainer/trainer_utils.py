@@ -63,6 +63,158 @@ def is_directml_device(device):
     return get_device(device).type == "privateuseone"
 
 
+def is_directml_fp16(device, dtype):
+    return is_directml_device(device) and str(dtype).lower() in {
+        "float16",
+        "fp16",
+        "torch.float16"
+    }
+
+
+def prepare_model_precision(model, device, dtype):
+    device = get_device(device)
+
+    if is_directml_fp16(device, dtype):
+        model = model.half()
+
+    return model.to(device)
+
+
+def create_grad_scaler(device, dtype):
+    device = get_device(device)
+
+    return torch.cuda.amp.GradScaler(
+        enabled=(
+            device.type == "cuda" and
+            str(dtype).lower() in {"float16", "fp16", "torch.float16"}
+        )
+    )
+
+
+def get_adamw_epsilon(
+    device,
+    dtype,
+    directml_adam_eps=1e-4,
+    default_eps=1e-8
+):
+    if is_directml_fp16(device, dtype):
+        if directml_adam_eps <= 0:
+            raise ValueError(
+                "DirectML FP16 AdamW epsilon must be greater than 0."
+            )
+
+        return directml_adam_eps
+
+    return default_eps
+
+
+def backward_loss(
+    loss,
+    scaler,
+    device,
+    dtype,
+    directml_loss_scale=1024.0
+):
+    if is_directml_fp16(device, dtype):
+        if directml_loss_scale <= 0:
+            raise ValueError(
+                "DirectML FP16 loss scale must be greater than 0."
+            )
+
+        scaled_loss = loss * directml_loss_scale
+        scaled_loss.backward()
+        return scaled_loss
+
+    scaler.scale(loss).backward()
+    return None
+
+
+def optimizer_step(
+    model,
+    optimizer,
+    scaler,
+    grad_clip,
+    device,
+    dtype,
+    directml_loss_scale=1024.0,
+    check_finite=True
+):
+    if is_directml_fp16(device, dtype):
+        if directml_loss_scale <= 0:
+            raise ValueError(
+                "DirectML FP16 loss scale must be greater than 0."
+            )
+
+        for parameter in model.parameters():
+            if parameter.grad is not None:
+                parameter.grad.div_(directml_loss_scale)
+
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            model.parameters(),
+            grad_clip
+        )
+
+        if check_finite:
+            grad_norm_value = grad_norm.detach().float().cpu().item()
+
+            if not math.isfinite(grad_norm_value):
+                raise RuntimeError(
+                    f"Non-finite gradient norm detected: {grad_norm_value}"
+                )
+
+        optimizer.step()
+        optimizer.zero_grad(set_to_none=True)
+
+        return grad_norm
+
+    scaler.unscale_(optimizer)
+
+    grad_norm = torch.nn.utils.clip_grad_norm_(
+        model.parameters(),
+        grad_clip
+    )
+
+    scaler.step(optimizer)
+    scaler.update()
+
+    optimizer.zero_grad(set_to_none=True)
+
+    return grad_norm
+
+
+def check_finite_loss(loss, context=""):
+    loss_value = loss.detach().float().cpu().item()
+
+    if not math.isfinite(loss_value):
+        suffix = f" ({context})" if context else ""
+
+        raise RuntimeError(
+            f"Non-finite loss detected{suffix}: {loss_value}"
+        )
+
+    return loss_value
+
+
+def configure_optimizer_for_directml_fp16(
+    optimizer,
+    device,
+    dtype,
+    directml_adam_eps=1e-4
+):
+    if not is_directml_fp16(device, dtype):
+        return optimizer
+
+    if directml_adam_eps <= 0:
+        raise ValueError(
+            "DirectML FP16 AdamW epsilon must be greater than 0."
+        )
+
+    for param_group in optimizer.param_groups:
+        param_group["eps"] = directml_adam_eps
+
+    return optimizer
+
+
 def clear_device_cache(device=None):
     device = get_device(device or "auto")
     if device.type == "cuda":
@@ -123,6 +275,7 @@ def setup_seed(seed: int):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
+
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
     moe_path = '_moe' if lm_config.use_moe else ''
@@ -179,12 +332,19 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         return None
 
 
-def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='auto'):
+def init_model(
+    lm_config,
+    from_weight='pretrain',
+    tokenizer_path='../model',
+    save_dir='../out',
+    device='auto',
+    dtype=None
+):
     device = get_device(device)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindForCausalLM(lm_config)
 
-    if from_weight!= 'none':
+    if from_weight != 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
         weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
         weights = torch.load(weight_path, map_location='cpu')
@@ -192,7 +352,17 @@ def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', sav
 
     get_model_params(model, lm_config)
     Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
-    return model.to(device), tokenizer
+
+    if dtype is not None:
+        model = prepare_model_precision(
+            model,
+            device,
+            dtype
+        )
+    else:
+        model = model.to(device)
+
+    return model, tokenizer
 
 
 class SkipBatchSampler(Sampler):

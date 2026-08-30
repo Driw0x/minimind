@@ -22,7 +22,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoModel
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -68,8 +68,14 @@ def calculate_rewards(prompts, responses, reward_model):
     return rewards
 
 
-def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model, start_step=0, wandb=None, use_sglang=False):
+def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model, start_step=0, wandb=None, use_sglang=False, remaining_steps=0):
+    last_step = start_step
+    executed_steps = 0
+    max_steps_reached = False
+
     for step, batch in enumerate(loader, start=start_step + 1):
+        last_step = step
+        executed_steps += 1
         prompts = batch['prompt']  # list[str], length B
         prompt_inputs = tokenizer(prompts, return_tensors="pt", padding=True, return_token_type_ids=False,
                                   padding_side="left", add_special_tokens=False).to(args.device)
@@ -142,14 +148,28 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
             per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
         policy_loss = ((per_token_loss * completion_mask).sum(dim=1) / completion_mask.sum(dim=1).clamp(min=1)).mean()
         loss = (policy_loss + aux_loss) / args.accumulation_steps  # scalar
-        loss.backward()
+        if directml_fp16:
+            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
+
+        backward_loss(
+            loss,
+            scaler,
+            args.device,
+            args.dtype,
+            args.directml_loss_scale
+        )
 
         if step % args.accumulation_steps == 0:
-            if args.grad_clip > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-            optimizer.step()
+            optimizer_step(
+                model,
+                optimizer,
+                scaler,
+                args.grad_clip if args.grad_clip > 0 else float("inf"),
+                args.device,
+                args.dtype,
+                args.directml_loss_scale
+            )
             scheduler.step()
-            optimizer.zero_grad()
 
         if step % args.log_interval == 0 or step == iters:
             policy_loss_val = loss.item() * args.accumulation_steps
@@ -186,7 +206,7 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
             state_dict = raw_model.state_dict()
             torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler, scaler=scaler)
             model.train()
             del state_dict
 
@@ -195,13 +215,24 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
         del prompt_inputs, outputs, completion_ids, per_token_logps, ref_per_token_logps
         del completions, rewards, grouped_rewards, mean_r, std_r, advantages, completion_mask, completion_pad_mask, prompt_lens, logp_pos
 
-    if step > start_step and step % args.accumulation_steps != 0:
-        if args.grad_clip > 0:
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
-        optimizer.step()
-        scheduler.step()
-        optimizer.zero_grad()
+        if remaining_steps > 0 and executed_steps >= remaining_steps:
+            max_steps_reached = True
+            break
 
+    if last_step > start_step and last_step % args.accumulation_steps != 0:
+        optimizer_step(
+            model,
+            optimizer,
+            scaler,
+            args.grad_clip if args.grad_clip > 0 else float("inf"),
+            args.device,
+            args.dtype,
+            args.directml_loss_scale
+        )
+        scheduler.step()
+
+
+    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind GRPO (Group Relative Policy Optimization)")
@@ -215,6 +246,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
+    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
@@ -258,6 +292,7 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = args.device.type
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    directml_fp16 = is_directml_fp16(args.device, args.dtype)
     autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
     
     # ========== 4. 配wandb ==========
@@ -272,9 +307,9 @@ if __name__ == "__main__":
     # ========== 5. 初始化模型和数据 ==========
     base_weight = args.from_weight
     # Policy模型
-    model, tokenizer = init_model(lm_config, base_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
     # Reference模型
-    ref_model, _ = init_model(lm_config, base_weight, device=args.device)
+    ref_model, _ = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
     ref_model = ref_model.eval().requires_grad_(False)
     # Reward模型
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float32 if is_directml_device(args.device) else torch.float16)
@@ -292,7 +327,12 @@ if __name__ == "__main__":
     # 数据和优化器
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=lm_config.max_seq_len, thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    scaler = create_grad_scaler(args.device, args.dtype)
+    optimizer = optim.AdamW(
+        model.parameters(),
+        lr=args.learning_rate,
+        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+    )
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler)
     iters = len(loader_for_count)
     total_optimizer_steps = math.ceil(iters / args.accumulation_steps) * args.epochs
@@ -303,6 +343,11 @@ if __name__ == "__main__":
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
         optimizer.load_state_dict(ckp_data['optimizer'])
+        configure_optimizer_for_directml_fp16(
+            optimizer, args.device, args.dtype, args.directml_adam_eps
+        )
+        if ckp_data.get('scaler') is not None:
+            scaler.load_state_dict(ckp_data['scaler'])
         scheduler.load_state_dict(ckp_data['scheduler'])
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
@@ -319,18 +364,33 @@ if __name__ == "__main__":
     rollout_engine.update_policy(model)
     
     # ========== 8. 开始训练 ==========
+    total_run_steps = 0
+
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"))
-        if skip > 0: 
+
+        remaining_steps = (
+            args.max_steps - total_run_steps
+            if args.max_steps > 0
+            else 0
+        )
+
+        if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            grpo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang = (args.rollout_engine == "sglang"))
+            executed_steps, max_steps_reached = grpo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
         else:
-            grpo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang = (args.rollout_engine == "sglang"))
-    
+            executed_steps, max_steps_reached = grpo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
+
+        total_run_steps += executed_steps
+
+        if max_steps_reached:
+            Logger(f'Maximum training steps reached: {total_run_steps}')
+            break
+
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():
         dist.barrier()

@@ -20,7 +20,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -75,12 +75,16 @@ def calculate_rewards(prompts, responses, reward_model):
     return rewards
 
 
-def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step=0, wandb=None):
+def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step=0, wandb=None, remaining_steps=0):
     actor_model.train()
     critic_model.train()
     grad_accum_step = 0
+    executed_steps = 0
+    max_steps_reached = False
 
     for step, batch in enumerate(loader, start=start_step + 1):
+        last_step = step
+        executed_steps += 1
         prompts = batch["prompt"]  # list[str], length B
         enc = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=args.max_seq_len,
                         padding_side="left").to(args.device)  # input_ids: [B, P], attention_mask: [B, P]
@@ -224,7 +228,16 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 else:
                     loss = (policy_loss + args.vf_coef * value_loss + aux_loss) / args.accumulation_steps
                 
-                loss.backward()
+                if directml_fp16:
+                    check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
+
+                backward_loss(
+                    loss,
+                    scaler,
+                    args.device,
+                    args.dtype,
+                    args.directml_loss_scale
+                )
 
                 policy_loss_sum += policy_loss.item()
                 value_loss_sum += value_loss.item()
@@ -237,24 +250,56 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 grad_accum_step += 1
 
                 if grad_accum_step % args.accumulation_steps == 0:
-                    clip_grad_norm_(actor_model.parameters(), args.grad_clip)
-                    clip_grad_norm_(critic_model.parameters(), args.grad_clip)
-                    actor_optimizer.step()
-                    critic_optimizer.step()
+                    if directml_fp16:
+                        optimizer_step(
+                            actor_model, actor_optimizer, scaler,
+                            args.grad_clip if args.grad_clip > 0 else float("inf"),
+                            args.device, args.dtype, args.directml_loss_scale
+                        )
+                        optimizer_step(
+                            critic_model, critic_optimizer, scaler,
+                            args.grad_clip if args.grad_clip > 0 else float("inf"),
+                            args.device, args.dtype, args.directml_loss_scale
+                        )
+                    else:
+                        scaler.unscale_(actor_optimizer)
+                        scaler.unscale_(critic_optimizer)
+                        clip_grad_norm_(actor_model.parameters(), args.grad_clip)
+                        clip_grad_norm_(critic_model.parameters(), args.grad_clip)
+                        scaler.step(actor_optimizer)
+                        scaler.step(critic_optimizer)
+                        scaler.update()
+                        actor_optimizer.zero_grad(set_to_none=True)
+                        critic_optimizer.zero_grad(set_to_none=True)
+
                     actor_scheduler.step()
                     critic_scheduler.step()
-                    actor_optimizer.zero_grad()
-                    critic_optimizer.zero_grad()
 
         if grad_accum_step % args.accumulation_steps != 0:
-            clip_grad_norm_(actor_model.parameters(), args.grad_clip)
-            clip_grad_norm_(critic_model.parameters(), args.grad_clip)
-            actor_optimizer.step()
-            critic_optimizer.step()
+            if directml_fp16:
+                optimizer_step(
+                    actor_model, actor_optimizer, scaler,
+                    args.grad_clip if args.grad_clip > 0 else float("inf"),
+                    args.device, args.dtype, args.directml_loss_scale
+                )
+                optimizer_step(
+                    critic_model, critic_optimizer, scaler,
+                    args.grad_clip if args.grad_clip > 0 else float("inf"),
+                    args.device, args.dtype, args.directml_loss_scale
+                )
+            else:
+                scaler.unscale_(actor_optimizer)
+                scaler.unscale_(critic_optimizer)
+                clip_grad_norm_(actor_model.parameters(), args.grad_clip)
+                clip_grad_norm_(critic_model.parameters(), args.grad_clip)
+                scaler.step(actor_optimizer)
+                scaler.step(critic_optimizer)
+                scaler.update()
+                actor_optimizer.zero_grad(set_to_none=True)
+                critic_optimizer.zero_grad(set_to_none=True)
+
             actor_scheduler.step()
             critic_scheduler.step()
-            actor_optimizer.zero_grad()
-            critic_optimizer.zero_grad()
         
         if step % args.save_interval == 0 or step == iters: rollout_engine.update_policy(actor_model)
 
@@ -296,7 +341,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             # 使用 lm_checkpoint 保存完整状态（包括 critic）
             lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints',
-                         scheduler=actor_scheduler, critic_model=critic_model, 
+                         scheduler=actor_scheduler, scaler=scaler, critic_model=critic_model, 
                          critic_optimizer=critic_optimizer, critic_scheduler=critic_scheduler)
             actor_model.train()
             del actor_state
@@ -305,6 +350,12 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         del labels, resp_labels, resp_idx, resp_pad_mask, valid_resp, eos_mask, has_eos, eos_pos, resp_lengths, resp_policy_mask, resp_value_mask, old_resp_logp, ref_resp_logp
         del kl, kl_ref, policy_loss, value_loss, loss, token_rewards, returns, old_resp_values, prompt_lens, logp_pos
 
+        if remaining_steps > 0 and executed_steps >= remaining_steps:
+            max_steps_reached = True
+            break
+
+
+    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind PPO (Proximal Policy Optimization)")
@@ -319,6 +370,9 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
+    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
@@ -366,6 +420,7 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = args.device.type
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    directml_fp16 = is_directml_fp16(args.device, args.dtype)
     autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
     
     # ========== 4. 配wandb ==========
@@ -380,15 +435,15 @@ if __name__ == "__main__":
     # ========== 5. 初始化模型和数据 ==========
     base_weight = args.from_weight
     # Actor模型
-    actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device)
-    ref_model, _ = init_model(lm_config, base_weight, device=args.device)
+    actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
+    ref_model, _ = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
     ref_model = ref_model.eval().requires_grad_(False)
     moe_suffix = '_moe' if lm_config.use_moe else ''
     ckp = f'{args.save_dir}/{base_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
     state_dict = torch.load(ckp, map_location='cpu')
     critic_model = CriticModel(lm_config)
     critic_model.load_state_dict(state_dict, strict=False)
-    critic_model = critic_model.to(args.device)
+    critic_model = prepare_model_precision(critic_model, args.device, args.dtype)
     reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float32 if is_directml_device(args.device) else torch.float16)
     # Rollout引擎
     rollout_engine = create_rollout_engine(
@@ -403,8 +458,17 @@ if __name__ == "__main__":
     )
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=(args.max_seq_len + args.max_gen_len), thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    actor_optimizer = optim.AdamW(actor_model.parameters(), lr=args.learning_rate)
-    critic_optimizer = optim.AdamW(critic_model.parameters(), lr=args.critic_learning_rate)
+    scaler = create_grad_scaler(args.device, args.dtype)
+    actor_optimizer = optim.AdamW(
+        actor_model.parameters(),
+        lr=args.learning_rate,
+        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+    )
+    critic_optimizer = optim.AdamW(
+        critic_model.parameters(),
+        lr=args.critic_learning_rate,
+        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+    )
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler)
     iters = len(loader_for_count)
     mb_factor = max(1, math.ceil(args.batch_size / args.mini_batch_size))
@@ -418,6 +482,14 @@ if __name__ == "__main__":
         critic_model.load_state_dict(ckp_data['critic_model'])
         actor_optimizer.load_state_dict(ckp_data['optimizer'])
         critic_optimizer.load_state_dict(ckp_data['critic_optimizer'])
+        configure_optimizer_for_directml_fp16(
+            actor_optimizer, args.device, args.dtype, args.directml_adam_eps
+        )
+        configure_optimizer_for_directml_fp16(
+            critic_optimizer, args.device, args.dtype, args.directml_adam_eps
+        )
+        if ckp_data.get('scaler') is not None:
+            scaler.load_state_dict(ckp_data['scaler'])
         actor_scheduler.load_state_dict(ckp_data['scheduler'])
         critic_scheduler.load_state_dict(ckp_data['critic_scheduler'])
         start_epoch = ckp_data['epoch']
@@ -436,18 +508,33 @@ if __name__ == "__main__":
     rollout_engine.update_policy(actor_model)
     
     # ========== 8. 开始训练 ==========
+    total_run_steps = 0
+
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
         loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"))
-        if skip > 0: 
+
+        remaining_steps = (
+            args.max_steps - total_run_steps
+            if args.max_steps > 0
+            else 0
+        )
+
+        if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            ppo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step, wandb)
+            executed_steps, max_steps_reached = ppo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step, wandb, remaining_steps)
         else:
-            ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb)
-    
+            executed_steps, max_steps_reached = ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb, remaining_steps)
+
+        total_run_steps += executed_steps
+
+        if max_steps_reached:
+            Logger(f'Maximum training steps reached: {total_run_steps}')
+            break
+
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():
         dist.barrier()
