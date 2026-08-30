@@ -30,6 +30,7 @@ def parse_args():
 
     parser.add_argument("--learning_rate", type=float, default=5e-4)
     parser.add_argument("--grad_clip", type=float, default=1.0)
+    parser.add_argument("--adam_eps", type=float, default=1e-8,)
 
     parser.add_argument("--warmup_steps", type=int, default=10)
     parser.add_argument("--steps", type=int, default=100)
@@ -37,6 +38,9 @@ def parse_args():
     parser.add_argument("--num_workers", type=int, default=8)
 
     parser.add_argument("--accumulation_steps", type=int, default=8,)
+
+    parser.add_argument("--model_dtype", choices=["float32", "float16"], default="float32",)
+    parser.add_argument("--loss_scale", type=float, default=1.0,)
 
     return parser.parse_args()
 
@@ -46,6 +50,15 @@ def main():
 
     if args.steps <= args.warmup_steps:
         raise ValueError("--steps must be greater than --warmup_steps.")
+
+    if args.accumulation_steps <= 0:
+        raise ValueError("--accumulation_steps must be greater than 0.")
+
+    if args.loss_scale <= 0:
+        raise ValueError("--loss_scale must be greater than 0.")
+
+    if args.adam_eps <= 0:
+        raise ValueError("--adam_eps must be greater than 0.")
 
     setup_seed(42)
 
@@ -64,6 +77,9 @@ def main():
         device=device,
     )
 
+    if args.model_dtype == "float16":
+        model = model.half()
+
     dataset = PretrainDataset(
         args.data_path,
         tokenizer,
@@ -81,6 +97,7 @@ def main():
     optimizer = optim.AdamW(
         model.parameters(),
         lr=args.learning_rate,
+        eps=args.adam_eps,
     )
 
     model.train()
@@ -96,6 +113,9 @@ def main():
     print("MiniMind real training benchmark")
     print("=" * 60)
     print(f"Device:             {args.device} -> {device}")
+    print(f"Model dtype:        {args.model_dtype}")
+    print(f"Loss scale:         {args.loss_scale}")
+    print(f"AdamW epsilon:      {args.adam_eps}")
     print(f"Dataset samples:    {len(dataset)}")
     print(f"Batch size:         {args.batch_size}")
     print(f"Max sequence len:   {args.max_seq_len}")
@@ -118,15 +138,38 @@ def main():
 
         result = model(input_ids, labels=labels)
         loss = result.loss + result.aux_loss
-        scaled_loss = loss / args.accumulation_steps
+
+        loss_value = loss.detach().float().cpu().item()
+
+        if not torch.isfinite(torch.tensor(loss_value)).item():
+            raise RuntimeError(
+                f"Non-finite loss detected at step {step}: {loss_value}"
+            )
+
+        scaled_loss = (
+            loss / args.accumulation_steps
+        ) * args.loss_scale
 
         scaled_loss.backward()
 
         if step % args.accumulation_steps == 0:
-            torch.nn.utils.clip_grad_norm_(
+            if args.loss_scale != 1.0:
+                for parameter in model.parameters():
+                    if parameter.grad is not None:
+                        parameter.grad.div_(args.loss_scale)
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(
                 model.parameters(),
                 args.grad_clip,
             )
+
+            grad_norm_value = grad_norm.detach().float().cpu().item()
+
+            if not torch.isfinite(torch.tensor(grad_norm_value)).item():
+                raise RuntimeError(
+                    f"Non-finite gradient norm detected at step {step}: "
+                    f"{grad_norm_value}"
+                )
 
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
@@ -136,7 +179,8 @@ def main():
         if step <= args.warmup_steps:
             print(
                 f"Warmup [{step}/{args.warmup_steps}] "
-                f"{elapsed:.3f}s"
+                f"{elapsed:.3f}s "
+                f"loss={loss_value:.4f}"
             )
             continue
 
@@ -155,7 +199,7 @@ def main():
         print(
             f"Step [{step}/{args.steps}] "
             f"time={elapsed:.3f}s "
-            f"loss={loss.item():.4f}"
+            f"loss={loss_value:.4f}"
         )
 
     if measured_steps == 0:

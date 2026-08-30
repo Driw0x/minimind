@@ -7,7 +7,7 @@ $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
 $Device = "directml:1"
 $TimeoutSeconds = 300
-$MaxSteps = 5
+$MaxSteps = 9
 
 $Batches = @(1, 2, 4, 8, 16, 32)
 
@@ -38,23 +38,31 @@ try {
 
             Write-Host ""
             Write-Host "========================================"
-            Write-Host "Testing DirectML"
-            Write-Host "device      = $Device"
-            Write-Host "batch_size  = $Batch"
-            Write-Host "max_seq_len = $Seq"
-            Write-Host "max_steps   = $MaxSteps"
-            Write-Host "timeout     = $TimeoutSeconds sec"
+            Write-Host "Testing DirectML FP16"
+            Write-Host "device             = $Device"
+            Write-Host "batch_size         = $Batch"
+            Write-Host "max_seq_len        = $Seq"
+            Write-Host "dtype              = float16"
+            Write-Host "accumulation_steps = 8"
+            Write-Host "loss_scale         = 1024"
+            Write-Host "adam_eps           = 1e-4"
+            Write-Host "max_steps          = $MaxSteps"
+            Write-Host "timeout            = $TimeoutSeconds sec"
             Write-Host "========================================"
 
             $Arguments = @(
                 "train_pretrain.py",
                 "--device", "$Device",
+                "--dtype", "float16",
                 "--hidden_size", "768",
                 "--num_hidden_layers", "8",
                 "--use_moe", "0",
                 "--batch_size", "$Batch",
                 "--max_seq_len", "$Seq",
                 "--num_workers", "0",
+                "--accumulation_steps", "8",
+                "--directml_loss_scale", "1024",
+                "--directml_adam_eps", "1e-4",
                 "--save_dir", "../out",
                 "--save_weight", "benchmark",
                 "--from_weight", "none",
@@ -210,8 +218,13 @@ finally {
 
 Write-Host ""
 Write-Host "========================================"
-Write-Host "DirectML compatibility results"
-Write-Host "Device: $Device"
+Write-Host "DirectML FP16 compatibility results"
+Write-Host "Device:             $Device"
+Write-Host "Model dtype:        float16"
+Write-Host "Loss scale:         1024"
+Write-Host "AdamW epsilon:      1e-4"
+Write-Host "Accumulation steps: 8"
+Write-Host "Validation steps:   $MaxSteps"
 Write-Host "========================================"
 Write-Host ""
 
