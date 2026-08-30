@@ -1,59 +1,77 @@
-# MiniMind — DirectML Limitations
+# MiniMind --- DirectML Limitations
 
-This document tracks the current unsupported, partially supported, and fallback operations identified while running MiniMind on DirectML.
+This document tracks the current unsupported, partially supported, and
+fallback operations identified while running MiniMind on DirectML.
 
-Detailed explanations of encountered problems, their causes, and implemented solutions are documented in [`directml_issues.md`](directml_issues.md).
+Detailed explanations of encountered problems, their causes, and
+implemented solutions are documented in
+[`directml_issues.md`](directml_issues.md).
 
-Performance measurements are documented in [`directml_benchmarks.md`](directml_benchmarks.md).
+Performance measurements are documented in
+[`directml_benchmarks.md`](directml_benchmarks.md).
 
----
+------------------------------------------------------------------------
 
 # Current Limitations
 
-| Feature / Operation                | Status      | Workaround                       |
-| ---------------------------------- | ----------- | -------------------------------- |
-| AdamW `aten::lerp.Scalar_out`      | Partial     | Automatic CPU fallback           |
-| InternLM2 Reward Model causal mask | Unsupported | Reward Model runs on CPU         |
-| `torch.compile`                    | Unsupported | Use `--use_compile 0`            |
-| CUDA AMP / autocast                | Not enabled | Standard DirectML execution path |
+  ---------------------------------------------------------------------------
+  Feature / Operation             Status        Workaround
+  ------------------------------- ------------- -----------------------------
+  AdamW `aten::lerp.Scalar_out`   Partial       Automatic CPU fallback
 
----
+  InternLM2 Reward Model causal   Unsupported   Reward Model runs on CPU
+  mask                                          
+
+  `torch.compile`                 Unsupported   Use `--use_compile 0`
+
+  CUDA AMP / autocast             Not used on   DirectML FP16 uses static
+                                  DirectML      loss scaling
+  ---------------------------------------------------------------------------
+
+------------------------------------------------------------------------
 
 # AdamW CPU Fallback
 
 The AdamW optimizer uses:
 
-```text
+``` text
 aten::lerp.Scalar_out
 ```
 
 which is not currently supported natively by the DirectML backend.
 
-`torch-directml` automatically falls back to CPU execution for this operation.
+`torch-directml` automatically falls back to CPU execution for this
+operation.
 
 Training remains functional, but the fallback may affect performance.
 
-The performance impact will be evaluated during M4.
+The fallback remains present during M4 real-training benchmarks. It does
+not prevent training, but its isolated performance cost has not been
+fully quantified.
 
----
+------------------------------------------------------------------------
 
 # Reward Model
 
-The InternLM2 Reward Model used by alignment workflows cannot currently execute entirely on DirectML because of incompatible causal-mask operations.
+The InternLM2 Reward Model used by alignment workflows cannot currently
+execute entirely on DirectML because of incompatible causal-mask
+operations.
 
 The current execution strategy is:
 
-```text
+``` text
 MiniMind policy          → DirectML
 MiniMind reference model → DirectML
 Reward Model             → CPU
 ```
 
-Required inputs are moved to CPU before reward-model inference, and reward values are transferred back to the training device when necessary.
+Required inputs are moved to CPU before reward-model inference, and
+reward values are transferred back to the training device when
+necessary.
 
 This fallback is handled by the shared training utilities.
 
----
+------------------------------------------------------------------------
 
 # torch.compile
 
@@ -61,54 +79,113 @@ This fallback is handled by the shared training utilities.
 
 When DirectML is selected, compilation should remain disabled:
 
-```text
+``` text
 --use_compile 0
 ```
 
----
+------------------------------------------------------------------------
 
 # Mixed Precision
 
-The upstream mixed-precision path relies on CUDA AMP/autocast.
+The upstream mixed-precision path relies on CUDA AMP/autocast, which is
+not used for DirectML.
 
-CUDA AMP is therefore not enabled for DirectML.
+M4 introduced a dedicated DirectML FP16 precision path using:
 
-DirectML currently uses the standard execution path without CUDA-specific automatic mixed precision.
+``` text
+Model dtype:       float16
+Static loss scale: 1024
+AdamW epsilon:     1e-4
+```
 
----
+The default AdamW epsilon of `1e-8` was not numerically stable in the
+validated pure-FP16 DirectML path. Static loss scaling alone was
+insufficient; the optimizer epsilon also had to be increased.
+
+This is a backend-specific precision workaround, not CUDA AMP.
+
+------------------------------------------------------------------------
 
 # Performance Considerations
 
-DirectML training is functional, but full-scale MiniMind training can be impractically slow on the tested setup.
+DirectML training is functional, and M4 showed that performance
+measurements can be strongly distorted by synchronization introduced by
+instrumentation.
 
-During a real pretraining run using the standard `pretrain_t2t_mini.jsonl` dataset with:
+Real-data stability testing produced:
 
-```text
-batch_size = 32
+``` text
+32 × 340 → OOM
+16 × 340 → OOM after first accumulation cycle
+ 8 × 340 → PASS for 100 bounded steps
+```
+
+The current reference configuration is:
+
+``` text
+batch_size = 8
 max_seq_len = 340
-epochs = 2
+gradient_accumulation_steps = 8
 ```
 
-the training loop reported approximately:
+An initial 100-step benchmark measured approximately:
 
-```text
-158780 steps / epoch
-~5.9 seconds / step
-~10.9 days / epoch
+``` text
+Average iteration time:      5.280 s
+Samples / second:            1.52
+Effective tokens / second:   304.81
+Estimated epoch duration:    9.70 days
 ```
 
-The run confirmed that real training works on DirectML, but also showed that compatibility does not imply practical full-training performance.
+Further investigation showed that this timing path introduced
+significant DirectML-to-CPU synchronization overhead.
 
-CPU fallbacks, including the AdamW `aten::lerp.Scalar_out` fallback, may further reduce training performance.
+After removing unnecessary synchronization from the critical training
+and measurement path, the same 100-step reference workload measured:
 
-For DirectML validation, bounded real-data training runs using `--max_steps` are therefore preferred over requiring completion of the full dataset.
+``` text
+Average iteration time:      0.482 s
+Samples / second:            16.61
+Effective tokens / second:   3341.37
+Padded tokens / second:      5647.46
+Estimated epoch duration:    21.24 h
+Estimated epoch duration:    0.89 days
+```
 
-Full training remains possible, but is considered optional and hardware-dependent.
+The corrected iteration time is approximately 10.95× faster than the
+initial measurement.
 
----
+The AdamW `aten::lerp.Scalar_out` CPU fallback remains present, but the
+large initial slowdown should not be attributed to this fallback alone.
+
+The corrected benchmark substantially improves the practical outlook for
+DirectML training.
+
+A subsequent `1000`-step pretraining run using DirectML FP16, static
+loss scale `1024`, AdamW epsilon `1e-4`, `batch_size = 8`,
+`max_seq_len = 340`, and gradient accumulation `8` completed
+successfully with finite losses throughout the run.
+
+Final FP16 monitoring measured approximately `7,769.62 MB` peak
+dedicated VRAM, about `33.15%` below the earlier FP32 peak.
+
+The validated reference configuration is therefore considered
+practically viable on the tested hardware. This conclusion remains
+hardware- and workload-specific and does not imply that every
+configuration passing a short compatibility benchmark is suitable for
+sustained training.
+
+Detailed measurements and historical results are maintained in
+[`directml_benchmarks.md`](directml_benchmarks.md).
+
+------------------------------------------------------------------------
 
 # Scope
 
-This document only tracks limitations that remain relevant to the current DirectML implementation.
+This document only tracks limitations that remain relevant to the
+current DirectML implementation.
 
-Resolved implementation bugs and robustness issues should be documented in [`directml_issues.md`](directml_issues.md) and [`update_log.md`](update_log.md) rather than retained as active DirectML limitations.
+Resolved implementation bugs and robustness issues should be documented
+in [`directml_issues.md`](directml_issues.md) and
+[`update_log.md`](update_log.md) rather than retained as active DirectML
+limitations.
