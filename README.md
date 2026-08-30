@@ -80,7 +80,7 @@ Establish and validate the basic DirectML environment.
 
 Adapt the actual MiniMind training pipeline to run on DirectML.
 
-- [ ] Audit CUDA-specific code in the training pipeline
+- [x] Audit CUDA-specific code in the training pipeline
 - [ ] Introduce DirectML-compatible device handling
 - [ ] Adapt mixed precision and CUDA-specific utilities where necessary
 - [ ] Run a minimal pretraining job on DirectML
