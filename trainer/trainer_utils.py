@@ -15,6 +15,46 @@ from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 from model.model_minimind import MiniMindForCausalLM
 
+try:
+    import torch_directml
+except ImportError:
+    torch_directml = None
+
+
+def get_device(device="auto"):
+    if device is None:
+        device = "auto"
+
+    if isinstance(device, torch.device):
+        return device
+
+    device = str(device).lower()
+
+    if device == "auto":
+        if torch_directml is not None:
+            return torch_directml.device()
+        if torch.cuda.is_available():
+            return torch.device("cuda")
+        return torch.device("cpu")
+
+    if device in {"directml", "dml"}:
+        if torch_directml is None:
+            raise RuntimeError("DirectML requested but torch-directml is not installed.")
+        return torch_directml.device()
+
+    return torch.device(device)
+
+
+def is_directml_device(device):
+    return get_device(device).type == "privateuseone"
+
+
+def clear_device_cache(device=None):
+    device = get_device(device or "auto")
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
+
 def get_model_params(model, config):
     total = sum(p.numel() for p in model.parameters()) / 1e6
     n_routed = getattr(config, 'n_routed_experts', getattr(config, 'num_experts', 0))
@@ -41,9 +81,17 @@ def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
 
 
-def init_distributed_mode():
+def init_distributed_mode(device=None):
     if int(os.environ.get("RANK", -1)) == -1:
-        return 0  # 非DDP模式
+        return 0
+
+    device = get_device(device or "auto")
+
+    if is_directml_device(device):
+        raise RuntimeError("Distributed training is not currently supported with DirectML.")
+
+    if device.type != "cuda":
+        raise RuntimeError(f"Distributed training is currently supported only with CUDA, got device: {device}.")
 
     dist.init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -55,10 +103,11 @@ def setup_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
@@ -84,7 +133,7 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
 
         resume_data = {
             'model': state_dict,
-            'optimizer': optimizer.state_dict(),
+            'optimizer': optimizer.state_dict() if optimizer is not None else None,
             'epoch': epoch,
             'step': step,
             'world_size': dist.get_world_size() if dist.is_initialized() else 1,
@@ -103,8 +152,8 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         torch.save(resume_data, resume_tmp)
         os.replace(resume_tmp, resume_path)
         del state_dict, resume_data
-        torch.cuda.empty_cache()
-    else:  # 加载模式
+        clear_device_cache()
+    else:
         if os.path.exists(resume_path):
             ckp_data = torch.load(resume_path, map_location='cpu')
             saved_ws = ckp_data.get('world_size', 1)
@@ -116,14 +165,15 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         return None
 
 
-def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
+def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='auto'):
+    device = get_device(device)
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindForCausalLM(lm_config)
 
     if from_weight!= 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
         weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-        weights = torch.load(weight_path, map_location=device)
+        weights = torch.load(weight_path, map_location='cpu')
         model.load_state_dict(weights, strict=False)
 
     get_model_params(model, lm_config)
@@ -158,7 +208,8 @@ class SkipBatchSampler(Sampler):
 
 
 class LMForRewardModel:
-    def __init__(self, model_path, device="cuda", dtype=torch.float16):
+    def __init__(self, model_path, device="auto", dtype=torch.float16):
+        device = get_device(device)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         self.model = AutoModel.from_pretrained(model_path, torch_dtype=dtype, trust_remote_code=True)
         self.model = self.model.to(device).eval()
