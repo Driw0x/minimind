@@ -27,33 +27,31 @@ The main goals are:
 
 ## Current status
 
-Basic MiniMind execution and training operations have been successfully tested with DirectML.
+MiniMind training and inference are functional on Windows with DirectML.
 
-Currently validated:
+The main training pipeline has been validated with DirectML, including:
 
-- DirectML device initialization;
-- model transfer to DirectML;
-- input tensors on DirectML;
-- forward pass;
-- loss computation;
-- backward pass;
-- AdamW optimizer step;
-- gradient reset;
-- basic training step.
+- pretraining;
+- supervised fine-tuning (SFT);
+- LoRA;
+- DPO;
+- GRPO;
+- PPO;
+- Agent RL;
+- knowledge distillation;
+- checkpoint compatibility between training stages.
 
-The current DirectML test suite passes successfully:
-
-```text
-6 passed, 1 warning
-```
-
-The remaining warning is caused by an unsupported DirectML operation inside `AdamW`:
+The automated test suite currently passes successfully:
 
 ```text
-aten::lerp.Scalar_out
+34 passed
 ```
 
-DirectML automatically falls back to the CPU for this operation. This does not prevent training from running, but may have performance implications.
+Some operations still require CPU fallback or have limited DirectML support.
+
+See [`docs/directml-limitations.md`](docs/directml-limitations.md) for details.
+
+The project is currently moving into **M4 — Performance & Stability**.
 
 ---
 
@@ -98,7 +96,7 @@ Validate the main MiniMind training stages with DirectML.
 - [x] Validate LoRA training
 - [x] Validate additional training stages supported by MiniMind
 - [x] Validate checkpoint compatibility between training stages
-- [ ] Document unsupported or partially supported DirectML operations
+- [x] Document unsupported or partially supported DirectML operations
 
 ### M4 — Performance & Stability
 
