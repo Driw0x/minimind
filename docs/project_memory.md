@@ -1,370 +1,244 @@
 # MiniMind — Project Memory
 
-## Purpose
-
-This repository is a fork of MiniMind adapted to experiment with and train small language models on Windows using DirectML.
-
-The main goals are to:
-
-* understand the complete training pipeline of a small language model;
-* experiment with MiniMind locally;
-* add DirectML support for GPU acceleration on Windows;
-* keep the fork as close as possible to the original MiniMind project;
-* document important technical changes, limitations, and decisions.
+This document records technical problems encountered while adapting MiniMind to DirectML, their causes, and the solutions or decisions applied.
 
 ---
 
-## Current Status
+## DirectML Device Displayed as `privateuseone:0`
 
-DirectML support has been successfully validated on a minimal MiniMind training step.
+### Problem
 
-### Working
+After initializing DirectML, PyTorch reports the device as:
 
-* PyTorch with `torch-directml`
-* DirectML device detection
-* Model execution on DirectML
-* Input tensors on DirectML
-* Forward pass
-* Loss computation
-* Backward pass
-* AdamW optimizer step
-* `zero_grad()`
-* Complete minimal training step
-* Initial `--device directml` support
-
-### Current Focus
-
-Integrate and validate DirectML support in the actual MiniMind training and evaluation scripts while keeping modifications to the original project minimal.
-
----
-
-## Environment
-
-Current development environment:
-
-```text
-OS: Windows
-PyTorch: 2.4.1+cpu
-GPU backend: DirectML
-DirectML package: torch-directml
-PyTorch device: privateuseone:0
-```
-
-DirectML devices are created with:
-
-```python
-import torch_directml
-
-device = torch_directml.device()
-```
-
-Although the project refers to the backend as `directml`, PyTorch exposes the device as:
-
-```text
+```text id="ivzjnw"
 privateuseone:0
 ```
 
-This is expected behavior.
+instead of a device name such as `directml:0`.
+
+This initially made it unclear whether the model was actually running on DirectML.
+
+### Cause
+
+`torch-directml` integrates DirectML into PyTorch through the `PrivateUse1` backend.
+
+Therefore, a DirectML device is internally exposed by PyTorch as:
+
+```text id="9csh9d"
+privateuseone:0
+```
+
+This is expected behavior and does not mean that execution is falling back to CPU.
+
+### Solution
+
+No code change is required.
+
+Device placement can be verified by checking the model, inputs, and outputs:
+
+```python id="v5f6ju"
+print(next(model.parameters()).device)
+print(input_ids.device)
+print(logits.device)
+```
+
+Expected output:
+
+```text id="gk1gnv"
+privateuseone:0
+```
 
 ---
 
-## DirectML Validation
+## AdamW CPU Fallback
 
-Before modifying the full MiniMind training pipeline, a minimal training test was used to verify DirectML compatibility.
+### Problem
 
-The following operations were successfully validated:
+During the AdamW optimizer step, PyTorch reports:
 
-```text
-Model → DirectML
-Inputs → DirectML
-Forward
-Loss
-Backward
-AdamW step
-zero_grad
+```text id="6uw86k"
+The operator 'aten::lerp.Scalar_out' is not currently supported
+on the DML backend and will fall back to run on the CPU.
 ```
 
-Observed result:
+The affected operator is:
 
-```text
-PyTorch: 2.4.1+cpu
-Device: privateuseone:0
-Input device: privateuseone:0
-Model device: privateuseone:0
-Logits shape: torch.Size([1, 16, 6400])
-Logits device: privateuseone:0
-Loss: 8.839616775512695
+```text id="lqvf6g"
+aten::lerp.Scalar_out
+```
 
-DirectML forward pass: OK
+### Cause
+
+DirectML does not currently implement every PyTorch operation used internally by `torch.optim.AdamW`.
+
+When an unsupported operation is encountered, `torch-directml` automatically executes it on the CPU when a fallback implementation is available.
+
+### Solution
+
+No workaround is currently required.
+
+The complete optimizer step was tested successfully despite the fallback:
+
+```text id="6jwg3p"
 DirectML backward pass: OK
 DirectML optimizer step: OK
 DirectML zero_grad: OK
 DirectML training step: OK
 ```
 
-This confirms that the fundamental PyTorch operations required to train MiniMind can execute through DirectML.
+The fallback is therefore accepted for now.
+
+It should be reconsidered only if it becomes a significant training performance bottleneck.
 
 ---
 
-## DirectML Integration
+## Checkpoint and Model Architecture Mismatch
 
-The fork introduces explicit DirectML device selection through:
+### Problem
 
-```text
---device directml
-```
+`eval_llm.py` failed while loading a checkpoint using:
 
-Example:
-
-```powershell
-python eval_llm.py `
-  --device directml `
-  --weight pretrain_128 `
-  --hidden_size 128 `
-  --num_hidden_layers 2 `
-  --max_new_tokens 32
-```
-
-The expected device flow is:
-
-```text
---device directml
-        ↓
-torch_directml.device()
-        ↓
-privateuseone:0
-        ↓
-model.to(device)
-        ↓
-tensor.to(device)
-```
-
-DirectML-specific changes should remain limited to device selection and compatibility handling whenever possible.
-
----
-
-## Test Configuration
-
-The initial DirectML tests use a deliberately small MiniMind configuration:
-
-```text
-hidden_size: 128
-num_hidden_layers: 2
-weight: pretrain_128
-```
-
-Evaluation tests use:
-
-```text
-max_new_tokens: 32
-```
-
-This small configuration is intended for development and validation rather than model quality.
-
-The priority is:
-
-```text
-Correctness
-    ↓
-Full pipeline validation
-    ↓
-Stability
-    ↓
-Performance
-    ↓
-Larger models
-```
-
----
-
-## Known DirectML Limitations
-
-### AdamW CPU Fallback
-
-DirectML does not currently implement every PyTorch operator used by AdamW.
-
-The following operator has been observed:
-
-```text
-aten::lerp.Scalar_out
-```
-
-PyTorch reports:
-
-```text
-The operator 'aten::lerp.Scalar_out' is not currently supported
-on the DML backend and will fall back to run on the CPU.
-```
-
-The fallback occurs during the optimizer step.
-
-### Current Impact
-
-The fallback:
-
-* does not crash training;
-* does not prevent the optimizer step;
-* allows the complete training step to finish;
-* may reduce training performance.
-
-CPU fallbacks are currently acceptable as long as they do not affect correctness or prevent training.
-
-Performance optimization will be considered after the complete pipeline has been validated.
-
----
-
-## Checkpoint Compatibility
-
-MiniMind checkpoints must be loaded with a model architecture compatible with the configuration used during training.
-
-For example, a checkpoint created using:
-
-```text
-hidden_size = 128
-num_hidden_layers = 2
-```
-
-must be loaded using the corresponding architecture.
-
-Checkpoint loading uses strict parameter matching:
-
-```python
+```python id="nqzxox"
 model.load_state_dict(
     torch.load(ckp, map_location="cpu"),
     strict=True
 )
 ```
 
-A mismatch can result in:
+The error indicated incompatible model parameters.
 
-* missing parameters;
-* unexpected parameters;
-* tensor shape mismatches.
+### Cause
 
-When checkpoint loading fails, the model configuration should therefore be checked before assuming the issue comes from DirectML.
+The model instantiated during evaluation did not initially match the architecture used to create the checkpoint.
 
-The original MiniMind checkpoint/output organization is preserved.
+MiniMind checkpoints depend on parameters such as:
 
----
-
-## Technical Decisions
-
-### DirectML as the Windows GPU Backend
-
-DirectML is used to provide GPU acceleration on Windows without requiring CUDA.
-
----
-
-### Keep the Fork Close to Upstream
-
-Changes to MiniMind should remain minimal.
-
-DirectML support should preferably be implemented through generic device handling rather than duplicating training or evaluation logic.
-
-For example:
-
-```python
-device = ...
-model.to(device)
+```text id="6yxzqs"
+hidden_size
+num_hidden_layers
+vocab_size
 ```
 
-is preferred over creating separate DirectML-specific versions of the training pipeline.
+With `strict=True`, PyTorch requires the checkpoint and instantiated model to have compatible parameters and tensor dimensions.
+
+The issue was therefore caused by model configuration rather than DirectML.
+
+### Solution
+
+Use the same model architecture during evaluation as during training.
+
+For the validation model:
+
+```text id="yxic44"
+hidden_size = 128
+num_hidden_layers = 2
+```
+
+the corresponding evaluation command must include:
+
+```powershell id="hnfs5k"
+--hidden_size 128 `
+--num_hidden_layers 2
+```
+
+The relationship to preserve is:
+
+```text id="rkn36l"
+Training configuration
+        ↓
+Checkpoint
+        ↓
+Evaluation configuration
+```
 
 ---
 
-### Preserve Existing Project Structure
+## DirectML Not Available as an Original Device Option
 
-The original MiniMind directory organization and checkpoint handling should remain unchanged unless a modification becomes technically necessary.
+### Problem
 
-DirectML support should not introduce unrelated structural changes.
+The original MiniMind scripts did not provide `directml` as an explicit device option.
+
+This prevented DirectML from being selected in the same way as the existing supported devices.
+
+### Cause
+
+The upstream MiniMind project was not designed with `torch-directml` as one of its execution backends.
+
+DirectML also requires initialization through:
+
+```python id="62pbkl"
+torch_directml.device()
+```
+
+rather than the standard CUDA device path.
+
+### Solution
+
+Add:
+
+```text id="69kicv"
+directml
+```
+
+as an explicit device option.
+
+The device is initialized when DirectML is selected:
+
+```python id="uf3x1d"
+import torch_directml
+
+device = torch_directml.device()
+```
+
+The resulting device can then be used through the existing PyTorch device-independent operations:
+
+```python id="4as6fb"
+model.to(device)
+tensor.to(device)
+```
+
+This avoids creating separate DirectML-specific training or evaluation pipelines.
 
 ---
 
-### CPU Fallbacks Are Temporarily Acceptable
+## DirectML End-to-End Validation
 
-Unsupported DirectML operations may fall back to CPU.
+### Problem
 
-These fallbacks should be documented and monitored, but they do not need to be eliminated before the full pipeline works.
+Successful isolated forward and backward passes were not enough to guarantee that the actual MiniMind workflow would function correctly with DirectML.
 
----
+Potential failures could still occur during training, checkpoint generation, checkpoint loading, evaluation, or generation.
 
-### Small Models First
+### Cause
 
-Development and debugging should use small configurations before attempting larger MiniMind models.
+DirectML compatibility depends on all PyTorch operations used throughout the complete workflow, not only the model's forward and backward operations.
 
-This makes DirectML compatibility issues faster and easier to isolate.
+### Solution
 
----
+A small MiniMind configuration was used to validate the complete workflow:
 
-## Current Pipeline
+```text id="prpkv2"
+hidden_size = 128
+num_hidden_layers = 2
+```
 
-The pipeline currently being validated is:
+The following pipeline was successfully tested:
 
-```text
-Dataset
-   ↓
-Tokenizer
-   ↓
-MiniMind Model
+```text id="f0bzd0"
+Training
    ↓
 DirectML
    ↓
-Forward Pass
+Model weights
    ↓
-Loss
+Checkpoint loading
    ↓
-Backward Pass
+eval_llm.py
    ↓
-Optimizer
+DirectML
    ↓
-Checkpoint
-   ↓
-Evaluation
-   ↓
-Text Generation
+Text generation
 ```
 
-The fundamental DirectML operations have been validated independently.
-
-The next goal is to confirm that they work correctly inside the actual MiniMind pipeline.
-
----
-
-## Next Steps
-
-* Continue adapting MiniMind scripts to accept DirectML where necessary.
-* Validate DirectML in the actual pretraining script.
-* Run a small real pretraining session.
-* Verify that training completes correctly.
-* Verify checkpoint generation using the existing MiniMind structure.
-* Load the generated checkpoint with `eval_llm.py`.
-* Validate complete text generation on DirectML.
-* Record any additional unsupported DirectML operators.
-* Evaluate the performance impact of CPU fallbacks.
-* Progressively test larger MiniMind configurations.
-
----
-
-## Update Log
-
-### DirectML Initial Validation
-
-* Configured PyTorch with `torch-directml`.
-* Confirmed DirectML device detection.
-* Confirmed that DirectML appears as `privateuseone:0`.
-* Validated model execution on DirectML.
-* Validated forward pass.
-* Validated loss computation.
-* Validated backward pass.
-* Validated AdamW optimizer step.
-* Validated `zero_grad()`.
-* Validated a complete minimal training step.
-* Identified the `aten::lerp.Scalar_out` CPU fallback.
-
-### MiniMind Integration
-
-* Added initial DirectML device handling.
-* Added support for selecting `directml` as a device.
-* Started validating the existing MiniMind evaluation pipeline with DirectML.
-* Tested a small 128 hidden-size / 2-layer configuration.
-* Identified checkpoint/model architecture compatibility as an important consideration.
+This configuration should remain useful as a lightweight regression test when future DirectML changes are introduced.
