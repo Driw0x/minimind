@@ -208,12 +208,33 @@ class SkipBatchSampler(Sampler):
 
 
 class LMForRewardModel:
-    def __init__(self, model_path, device="auto", dtype=torch.float16):
-        device = get_device(device)
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-        self.model = AutoModel.from_pretrained(model_path, torch_dtype=dtype, trust_remote_code=True)
-        self.model = self.model.to(device).eval()
-        self.device = device
+    def __init__(self, model_path, device="cuda", dtype=torch.float16):
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True
+        )
+
+        # InternLM2 Reward Model has a causal-mask incompatibility with DirectML.
+        # Keep the reward model on CPU while the MiniMind models stay on DirectML.
+        if is_directml_device(device):
+            reward_device = torch.device("cpu")
+            reward_dtype = torch.float32
+            Logger(
+                "DirectML detected: Reward Model will run on CPU "
+                "due to unsupported InternLM2 causal-mask operations."
+            )
+        else:
+            reward_device = device
+            reward_dtype = dtype
+
+        self.model = AutoModel.from_pretrained(
+            model_path,
+            torch_dtype=reward_dtype,
+            trust_remote_code=True
+        )
+
+        self.model = self.model.to(reward_device).eval()
+        self.device = reward_device
 
     @torch.no_grad()
     def get_score(self, messages, response):
