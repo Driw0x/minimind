@@ -224,37 +224,32 @@ A warning related to `aten::lerp.Scalar_out` may also appear because this operat
 ```text
 minimind/
 │
-├── dataset/                  # Dataset loading and processing
-│   ├── __init__.py
-│   ├── dataset.md
-│   └── lm_dataset.py
+├── checkpoints/             # Training resume checkpoints (not tracked)
+├── dataset/                 # Dataset loading and training data
 │
-├── docs/
-│   └── original/             # Original MiniMind README files
-│       ├── README.md
-│       └── README_en.md
+├── docs/                    # Project and DirectML documentation
+│   ├── original/            # Original MiniMind documentation
+│   ├── directml_audit.md
+│   ├── directml-limitations.md
+│   ├── project_memory.md
+│   └── update_log.md
 │
-├── images/                   # Project images and resources
+├── images/                  # Project images and resources
+├── model/                   # MiniMind model implementation
+├── out/                     # Generated model weights (not tracked)
+├── scripts/                 # Utility, evaluation and API scripts
+├── tests/                   # Automated compatibility tests
+│   └── fixtures/            # Small deterministic test datasets
 │
-├── model/                    # MiniMind model implementation
-│
-├── scripts/                  # Utility and execution scripts
-│
-├── tests/                    # Tests including DirectML compatibility
-│   ├── __init__.py
-│   └── test_directml.py
-│
-├── trainer/                  # Training scripts
+├── trainer/                 # DirectML-compatible training pipeline
 │
 ├── .gitignore
-├── CODE_OF_CONDUCT.md
-├── eval_llm.py
-├── LICENSE
+├── eval_llm.py              # Local model evaluation and inference
 ├── requirements.txt
-└── README.md                 # Documentation for this fork
+└── README.md
 ```
 
-The structure may evolve as DirectML support is progressively integrated into the different parts of MiniMind.
+Generated model weights and training checkpoints are local runtime artifacts and are not intended to be tracked by Git.
 
 ---
 
