@@ -129,7 +129,15 @@ directml
 
 ### Lesson
 
-Internal `privateuseone` device names should not be interpreted as CPU execution or incorrect DirectML initialization.
+Benchmark results should be treated as compatibility indicators rather than performance recommendations.
+
+Real pretraining confirmed that a configuration can execute successfully on DirectML while remaining impractical for full-scale training.
+
+On the tested setup, real pretraining required approximately 5.9 seconds per step, resulting in an estimated runtime of approximately 10.9 days per epoch.
+
+DirectML validation should therefore use bounded real-data training runs with `--max_steps` when full-dataset execution is not practical.
+
+Detailed performance measurements belong in [`directml_benchmarks.md`](directml_benchmarks.md).
 
 ---
 

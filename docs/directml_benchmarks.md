@@ -212,3 +212,28 @@ Benchmarking should be repeated when relevant execution conditions change, inclu
 * trainer;
 * DirectML/PyTorch environment;
 * other changes that significantly affect memory or computation requirements.
+
+---
+
+# Real Training Observation
+
+The compatibility benchmark only determines whether a configuration can execute successfully. It does not determine whether that configuration is practical for full-scale training.
+
+A real pretraining run using:
+
+- `batch_size = 32`
+- `max_seq_len = 340`
+
+executed successfully on DirectML.
+
+However, the observed throughput was approximately:
+
+- 5.9 seconds per step;
+- 158780 steps per epoch;
+- 10.9 days per epoch.
+
+This confirms that a configuration can be technically compatible while still being impractical for full-scale training.
+
+Compatibility benchmark results should therefore not be interpreted as performance recommendations.
+
+---

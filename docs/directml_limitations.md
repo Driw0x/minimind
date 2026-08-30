@@ -79,18 +79,31 @@ DirectML currently uses the standard execution path without CUDA-specific automa
 
 # Performance Considerations
 
-CPU fallbacks preserve functionality but may reduce training performance.
+DirectML training is functional, but full-scale MiniMind training can be impractically slow on the tested setup.
 
-The practical impact has not yet been fully quantified.
+During a real pretraining run using the standard `pretrain_t2t_mini.jsonl` dataset with:
 
-M4 — Performance & Stability will evaluate:
+```text
+batch_size = 32
+max_seq_len = 340
+epochs = 2
+```
 
-* GPU memory usage;
-* training throughput;
-* CPU fallback frequency;
-* performance impact of CPU fallbacks;
-* longer training runs;
-* runtime stability.
+the training loop reported approximately:
+
+```text
+158780 steps / epoch
+~5.9 seconds / step
+~10.9 days / epoch
+```
+
+The run confirmed that real training works on DirectML, but also showed that compatibility does not imply practical full-training performance.
+
+CPU fallbacks, including the AdamW `aten::lerp.Scalar_out` fallback, may further reduce training performance.
+
+For DirectML validation, bounded real-data training runs using `--max_steps` are therefore preferred over requiring completion of the full dataset.
+
+Full training remains possible, but is considered optional and hardware-dependent.
 
 ---
 

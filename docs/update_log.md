@@ -104,12 +104,20 @@ Text generation
 
 Current milestone.
 
+Initial validation:
+
+* Started real-data pretraining validation on DirectML.
+* Confirmed sustained pretraining execution using the real MiniMind pretraining dataset.
+* Measured approximately 5.9 seconds per training step with the tested configuration.
+* Observed 158780 steps per epoch, corresponding to an estimated runtime of approximately 10.9 days per epoch.
+* Confirmed that a technically compatible DirectML configuration may still be impractical for full-scale training.
+* Adopted bounded real-data training runs using `--max_steps` for practical DirectML validation.
+
 Planned work includes:
 
 * GPU memory measurement;
-* training throughput measurement;
 * CPU fallback identification and measurement;
 * evaluation of CPU fallback performance impact;
-* longer training runs;
+* longer bounded training runs;
 * stability and error-handling improvements;
 * consolidation of known DirectML limitations.
