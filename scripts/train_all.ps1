@@ -1,228 +1,203 @@
-param(
-    [int]$BatchSize = 2,
-    [int]$MaxSeqLen = 256
-)
-
 $ErrorActionPreference = "Stop"
 
-$OriginalLocation = Get-Location
-$ProjectRoot = Split-Path -Parent $PSScriptRoot
-$TrainerDir = Join-Path $ProjectRoot "trainer"
+# ============================================================
+# MiniMind - Sequential DirectML training
+#
+# Run from repository root:
+#   .\scripts\train_all.ps1
+#
+# out/         -> model weights
+# checkpoints/ -> training resume checkpoints
+# ============================================================
 
-$Python = "..\.venv\Scripts\python.exe"
-$SaveDir = "../out"
+# Repository root = parent of scripts/
+$Root = Split-Path -Parent $PSScriptRoot
+
+$Python = Join-Path $Root ".venv\Scripts\python.exe"
+$TrainerDir = Join-Path $Root "trainer"
+
+# ------------------------------------------------------------
+# Global DirectML configuration
+# ------------------------------------------------------------
+
+$Device = "directml:1"
+$HiddenSize = 768
+$NumHiddenLayers = 8
+$UseMoe = 0
+
+$BatchSize = 8
+$MaxSeqLen = 340
+
+$UseCompile = 0
+
 
 function Run-Training {
-    param(
+    param (
         [string]$Name,
         [string]$Script,
         [string[]]$Arguments
     )
 
     Write-Host ""
-    Write-Host "========================================"
-    Write-Host "Training: $Name"
-    Write-Host "Batch size: $BatchSize"
-    Write-Host "Max seq len: $MaxSeqLen"
-    Write-Host "========================================"
+    Write-Host "============================================================"
+    Write-Host " $Name"
+    Write-Host "============================================================"
     Write-Host ""
 
-    & $Python $Script @Arguments
+    Push-Location $TrainerDir
 
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Name failed with exit code $LASTEXITCODE"
+    try {
+        & $Python $Script @Arguments
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host ""
+            Write-Host "[FAILED] $Name"
+            Write-Host "Exit code: $LASTEXITCODE"
+            exit $LASTEXITCODE
+        }
+    }
+    finally {
+        Pop-Location
     }
 
     Write-Host ""
-    Write-Host "$Name completed successfully."
+    Write-Host "[OK] $Name completed successfully."
 }
 
-try {
-    Set-Location $TrainerDir
 
-    Write-Host ""
-    Write-Host "========================================"
-    Write-Host "MiniMind DirectML training pipeline"
-    Write-Host "========================================"
-    Write-Host "Device      : DirectML"
-    Write-Host "Batch size  : $BatchSize"
-    Write-Host "Max seq len : $MaxSeqLen"
-    Write-Host "Save dir    : $SaveDir"
-    Write-Host "========================================"
+# ============================================================
+# 1. PRETRAIN
+# ============================================================
 
-    # ---------------------------------------------------------
-    # 1. Pretrain
-    # ---------------------------------------------------------
+Run-Training `
+    "1 - Pretrain" `
+    "train_pretrain.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "none",
+        "--use_compile", $UseCompile
+    )
 
-    Run-Training `
-        -Name "Pretrain" `
-        -Script "train_pretrain.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "pretrain",
-            "--from_weight", "none",
-            "--use_compile", "0"
-        )
 
-    # ---------------------------------------------------------
-    # 2. Full SFT
-    # ---------------------------------------------------------
+# ============================================================
+# 2. FULL SFT
+# ============================================================
 
-    Run-Training `
-        -Name "Full SFT" `
-        -Script "train_full_sft.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "full_sft",
-            "--from_weight", "pretrain",
-            "--use_compile", "0"
-        )
+Run-Training `
+    "2 - Full SFT" `
+    "train_full_sft.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "pretrain",
+        "--use_compile", $UseCompile
+    )
 
-    # ---------------------------------------------------------
-    # 3. LoRA
-    # ---------------------------------------------------------
 
-    Run-Training `
-        -Name "LoRA" `
-        -Script "train_lora.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--from_weight", "full_sft",
-            "--use_compile", "0"
-        )
+# ============================================================
+# 3. LoRA
+# ============================================================
 
-    # ---------------------------------------------------------
-    # 4. DPO
-    # ---------------------------------------------------------
+Run-Training `
+    "3 - LoRA" `
+    "train_lora.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "full_sft",
+        "--use_compile", $UseCompile
+    )
 
-    Run-Training `
-        -Name "DPO" `
-        -Script "train_dpo.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "dpo",
-            "--from_weight", "full_sft",
-            "--use_compile", "0"
-        )
 
-    # ---------------------------------------------------------
-    # 5. GRPO
-    # ---------------------------------------------------------
+# ============================================================
+# 4. DPO
+# ============================================================
 
-    Run-Training `
-        -Name "GRPO" `
-        -Script "train_grpo.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "grpo",
-            "--from_weight", "full_sft",
-            "--use_compile", "0"
-        )
+Run-Training `
+    "4 - DPO" `
+    "train_dpo.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "full_sft",
+        "--use_compile", $UseCompile
+    )
 
-    # ---------------------------------------------------------
-    # 6. PPO
-    # ---------------------------------------------------------
 
-    Run-Training `
-        -Name "PPO" `
-        -Script "train_ppo.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "ppo",
-            "--from_weight", "full_sft",
-            "--use_compile", "0"
-        )
+# ============================================================
+# 5. GRPO
+# ============================================================
 
-    # ---------------------------------------------------------
-    # 7. Agent RL
-    # ---------------------------------------------------------
+Run-Training `
+    "5 - GRPO" `
+    "train_grpo.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "full_sft",
+        "--use_compile", $UseCompile
+    )
 
-    Run-Training `
-        -Name "Agent RL" `
-        -Script "train_agent.py" `
-        -Arguments @(
-            "--device", "directml",
-            "--hidden_size", "768",
-            "--num_hidden_layers", "8",
-            "--use_moe", "0",
-            "--batch_size", "$BatchSize",
-            "--max_seq_len", "$MaxSeqLen",
-            "--num_workers", "0",
-            "--save_dir", "$SaveDir",
-            "--save_weight", "agent",
-            "--from_weight", "full_sft",
-            "--use_compile", "0"
-        )
 
-    # ---------------------------------------------------------
-    # Distillation
-    # ---------------------------------------------------------
-    #
-    # Intentionally disabled for now.
-    #
-    # Run-Training `
-    #     -Name "Distillation" `
-    #     -Script "train_distillation.py" `
-    #     -Arguments @(
-    #         ...
-    #     )
+# ============================================================
+# 6. PPO
+# ============================================================
 
-    Write-Host ""
-    Write-Host "========================================"
-    Write-Host "All training stages completed."
-    Write-Host "========================================"
-}
-catch {
-    Write-Host ""
-    Write-Host "========================================"
-    Write-Host "Training pipeline stopped."
-    Write-Host "========================================"
-    Write-Host $_.Exception.Message
+Run-Training `
+    "6 - PPO" `
+    "train_ppo.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--from_weight", "full_sft",
+        "--use_compile", $UseCompile
+    )
 
-    exit 1
-}
-finally {
-    Set-Location $OriginalLocation
-}
+
+# ============================================================
+# 7. AGENT
+# ============================================================
+
+Run-Training `
+    "7 - Agent" `
+    "train_agent.py" `
+    @(
+        "--device", $Device,
+        "--hidden_size", $HiddenSize,
+        "--num_hidden_layers", $NumHiddenLayers,
+        "--use_moe", $UseMoe,
+        "--batch_size", $BatchSize,
+        "--max_seq_len", $MaxSeqLen,
+        "--use_compile", $UseCompile
+    )
+
+
+Write-Host ""
+Write-Host "============================================================"
+Write-Host " ALL TRAININGS COMPLETED SUCCESSFULLY"
+Write-Host "============================================================"
