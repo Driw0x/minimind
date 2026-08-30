@@ -102,22 +102,49 @@ Text generation
 
 # M4 — Performance & Stability
 
-Current milestone.
-
-Initial validation:
-
-* Started real-data pretraining validation on DirectML.
+* Started real-data pretraining performance and stability validation on DirectML.
+* Added bounded real-data training runs using `--max_steps` to make DirectML benchmarking practical.
 * Confirmed sustained pretraining execution using the real MiniMind pretraining dataset.
-* Measured approximately 5.9 seconds per training step with the tested configuration.
-* Observed 158780 steps per epoch, corresponding to an estimated runtime of approximately 10.9 days per epoch.
-* Confirmed that a technically compatible DirectML configuration may still be impractical for full-scale training.
-* Adopted bounded real-data training runs using `--max_steps` for practical DirectML validation.
+* Benchmarked training on the explicitly selected `directml:1` adapter.
+* Tested real training with the full `max_seq_len = 340` configuration.
+* Validated real-data execution with `batch_size = 8` and `max_seq_len = 340`.
+* Used gradient accumulation to preserve a larger effective batch size while keeping the physical batch size compatible with DirectML memory constraints.
+* Added warmup steps before performance measurement to avoid including initialization overhead in steady-state timing.
+* Observed approximately 5–6 seconds per training step after warmup with the tested configuration.
+* Confirmed that full-epoch training remains impractical at the measured DirectML throughput.
+* Established bounded step-based runs as the preferred method for DirectML performance and stability validation.
+* Compared the synthetic DirectML compatibility benchmark with real MiniMind training behavior.
+* Confirmed that configurations passing the synthetic compatibility benchmark are not guaranteed to remain practical or stable with real training data.
+* Identified `batch_size` and `max_seq_len` as interacting memory constraints rather than independent compatibility limits.
+* Confirmed that smaller physical batches provide substantially more headroom for full sequence lengths.
+* Identified DirectML CPU fallback during AdamW execution for unsupported operations such as `aten::lerp.Scalar_out`.
+* Confirmed that the fallback does not prevent training but introduces a potential performance bottleneck.
+* Distinguished DirectML device compatibility from actual end-to-end training performance.
+* Confirmed that explicit physical adapter selection remains necessary to obtain reproducible benchmark results on multi-GPU systems.
+* Documented the difference between synthetic compatibility results and real-data training observations.
+* Consolidated DirectML benchmark methodology and results for future regression testing.
 
-Planned work includes:
+Current conclusions:
 
-* GPU memory measurement;
-* CPU fallback identification and measurement;
-* evaluation of CPU fallback performance impact;
-* longer bounded training runs;
-* stability and error-handling improvements;
-* consolidation of known DirectML limitations.
+```text
+DirectML compatibility
+        ↓
+Synthetic benchmark
+        ↓
+Real-data bounded training
+        ↓
+Performance / fallback analysis
+        ↓
+Practical configuration
+```
+
+The current practical reference configuration for real-data DirectML validation is:
+
+```text
+Device:              directml:1
+Batch size:          8
+Max sequence length: 340
+Gradient accumulation: 8
+```
+
+This configuration is intended as a **validation and benchmarking baseline**, not as evidence that full-scale MiniMind training on DirectML is computationally practical.
