@@ -1,8 +1,21 @@
 # MiniMind — Project Memory
 
-This document records technical problems encountered while adapting MiniMind to DirectML, their causes, and the solutions or decisions applied.
+This document records the technical problems encountered while adapting MiniMind to DirectML.
+
+Problems are grouped by the milestone during which they were encountered.
+
+Each entry focuses on:
+
+* the problem;
+* its cause;
+* the implemented solution;
+* the resulting technical decision when relevant.
+
+Development progress and completed features are tracked separately in `update_log.md`.
 
 ---
+
+# M1 — DirectML Foundation
 
 ## DirectML Device Displayed as `privateuseone:0`
 
@@ -10,11 +23,15 @@ This document records technical problems encountered while adapting MiniMind to 
 
 After initializing DirectML, PyTorch reports the device as:
 
-```text id="ivzjnw"
+```text
 privateuseone:0
 ```
 
-instead of a device name such as `directml:0`.
+instead of a device name such as:
+
+```text
+directml:0
+```
 
 This initially made it unclear whether the model was actually running on DirectML.
 
@@ -22,9 +39,9 @@ This initially made it unclear whether the model was actually running on DirectM
 
 `torch-directml` integrates DirectML into PyTorch through the `PrivateUse1` backend.
 
-Therefore, a DirectML device is internally exposed by PyTorch as:
+A DirectML device is therefore internally exposed by PyTorch as:
 
-```text id="9csh9d"
+```text
 privateuseone:0
 ```
 
@@ -32,11 +49,11 @@ This is expected behavior and does not mean that execution is falling back to CP
 
 ### Solution
 
-No code change is required.
+No code change was required.
 
-Device placement can be verified by checking the model, inputs, and outputs:
+Device placement was verified by checking the model, inputs, and outputs:
 
-```python id="v5f6ju"
+```python
 print(next(model.parameters()).device)
 print(input_ids.device)
 print(logits.device)
@@ -44,9 +61,72 @@ print(logits.device)
 
 Expected output:
 
-```text id="gk1gnv"
+```text
 privateuseone:0
 ```
+
+### Decision
+
+`privateuseone:0` is treated as the expected internal representation of a DirectML device.
+
+The user-facing device name remains:
+
+```text
+directml
+```
+
+---
+
+## DirectML Not Available as an Original Device Option
+
+### Problem
+
+The original MiniMind scripts did not provide DirectML as an explicit device option.
+
+This prevented DirectML from being selected through the existing device configuration.
+
+### Cause
+
+Upstream MiniMind was not designed with `torch-directml` as one of its execution backends.
+
+DirectML also requires explicit initialization through:
+
+```python
+torch_directml.device()
+```
+
+rather than the standard CUDA device path.
+
+### Solution
+
+Added:
+
+```text
+directml
+```
+
+as an explicit device option.
+
+When selected, the DirectML device is initialized through:
+
+```python
+import torch_directml
+
+device = torch_directml.device()
+```
+
+The resulting device can then be used with standard PyTorch device-independent operations:
+
+```python
+model.to(device)
+tensor.to(device)
+```
+
+### Decision
+
+DirectML support should reuse the existing MiniMind execution pipeline instead of introducing separate DirectML-specific training or evaluation implementations.
+
+Backend differences should be handled through device resolution whenever possible.
 
 ---
 
@@ -56,176 +136,157 @@ privateuseone:0
 
 During the AdamW optimizer step, PyTorch reports:
 
-```text id="6uw86k"
+```text
 The operator 'aten::lerp.Scalar_out' is not currently supported
 on the DML backend and will fall back to run on the CPU.
 ```
 
-The affected operator is:
+The affected operation is:
 
-```text id="lqvf6g"
+```text
 aten::lerp.Scalar_out
 ```
 
 ### Cause
 
-DirectML does not currently implement every PyTorch operation used internally by `torch.optim.AdamW`.
+DirectML does not implement every PyTorch operation used internally by:
 
-When an unsupported operation is encountered, `torch-directml` automatically executes it on the CPU when a fallback implementation is available.
+```python
+torch.optim.AdamW
+```
+
+When an unsupported operation has a CPU implementation available, `torch-directml` can automatically fall back to CPU execution.
 
 ### Solution
 
-No workaround is currently required.
+The complete optimizer and training step were tested despite the warning:
 
-The complete optimizer step was tested successfully despite the fallback:
-
-```text id="6jwg3p"
+```text
 DirectML backward pass: OK
 DirectML optimizer step: OK
 DirectML zero_grad: OK
 DirectML training step: OK
 ```
 
-The fallback is therefore accepted for now.
+The fallback does not prevent training and therefore does not currently require a workaround.
 
-It should be reconsidered only if it becomes a significant training performance bottleneck.
+### Decision
+
+CPU fallbacks are acceptable when:
+
+* training remains correct;
+* gradients remain valid;
+* execution does not crash.
+
+Fallbacks should still be documented because they may affect training performance.
 
 ---
+
+# M2 — Pretraining and Evaluation Integration
 
 ## Checkpoint and Model Architecture Mismatch
 
 ### Problem
 
-`eval_llm.py` failed while loading a checkpoint using:
+`eval_llm.py` failed while loading a checkpoint using strict state-dictionary matching:
 
-```python id="nqzxox"
+```python
 model.load_state_dict(
     torch.load(ckp, map_location="cpu"),
     strict=True
 )
 ```
 
-The error indicated incompatible model parameters.
+The error reported incompatible model parameters.
 
 ### Cause
 
 The model instantiated during evaluation did not initially match the architecture used to create the checkpoint.
 
-MiniMind checkpoints depend on parameters such as:
+MiniMind checkpoints depend on model configuration parameters such as:
 
-```text id="6yxzqs"
+```text
 hidden_size
 num_hidden_layers
 vocab_size
 ```
 
-With `strict=True`, PyTorch requires the checkpoint and instantiated model to have compatible parameters and tensor dimensions.
+For example, the validation checkpoint was produced using:
 
-The issue was therefore caused by model configuration rather than DirectML.
-
-### Solution
-
-Use the same model architecture during evaluation as during training.
-
-For the validation model:
-
-```text id="yxic44"
+```text
 hidden_size = 128
 num_hidden_layers = 2
 ```
 
-the corresponding evaluation command must include:
+Loading it into a differently configured model produces missing keys, unexpected keys, or incompatible tensor dimensions.
 
-```powershell id="hnfs5k"
+The issue was therefore unrelated to DirectML.
+
+### Solution
+
+The evaluation model must use an architecture compatible with the model used during training.
+
+For the validation model:
+
+```powershell
 --hidden_size 128 `
 --num_hidden_layers 2
 ```
 
-The relationship to preserve is:
+must be supplied when evaluating the corresponding checkpoint.
 
-```text id="rkn36l"
+The required relationship is:
+
+```text
 Training configuration
         ↓
-Checkpoint
+Checkpoint architecture
         ↓
 Evaluation configuration
 ```
 
----
+### Decision
 
-## DirectML Not Available as an Original Device Option
+Checkpoint-loading errors should not automatically be attributed to DirectML.
 
-### Problem
-
-The original MiniMind scripts did not provide `directml` as an explicit device option.
-
-This prevented DirectML from being selected in the same way as the existing supported devices.
-
-### Cause
-
-The upstream MiniMind project was not designed with `torch-directml` as one of its execution backends.
-
-DirectML also requires initialization through:
-
-```python id="62pbkl"
-torch_directml.device()
-```
-
-rather than the standard CUDA device path.
-
-### Solution
-
-Add:
-
-```text id="69kicv"
-directml
-```
-
-as an explicit device option.
-
-The device is initialized when DirectML is selected:
-
-```python id="uf3x1d"
-import torch_directml
-
-device = torch_directml.device()
-```
-
-The resulting device can then be used through the existing PyTorch device-independent operations:
-
-```python id="4as6fb"
-model.to(device)
-tensor.to(device)
-```
-
-This avoids creating separate DirectML-specific training or evaluation pipelines.
+Model configuration compatibility must be verified first.
 
 ---
 
-## DirectML End-to-End Validation
+## Isolated DirectML Tests Were Not Sufficient
 
 ### Problem
 
-Successful isolated forward and backward passes were not enough to guarantee that the actual MiniMind workflow would function correctly with DirectML.
+Successful forward, backward, and optimizer tests confirmed that basic MiniMind operations worked with DirectML, but they did not guarantee that the complete MiniMind workflow was compatible.
 
-Potential failures could still occur during training, checkpoint generation, checkpoint loading, evaluation, or generation.
+Potential failures could still occur during:
+
+```text
+Training
+Checkpoint creation
+Checkpoint loading
+Evaluation
+Generation
+```
 
 ### Cause
 
-DirectML compatibility depends on all PyTorch operations used throughout the complete workflow, not only the model's forward and backward operations.
+DirectML compatibility depends on all PyTorch operations used throughout the complete workflow.
+
+A minimal training step only exercises part of the actual MiniMind execution path.
 
 ### Solution
 
-A small MiniMind configuration was used to validate the complete workflow:
+A deliberately small MiniMind model was used as an end-to-end validation configuration:
 
-```text id="prpkv2"
+```text
 hidden_size = 128
 num_hidden_layers = 2
 ```
 
-The following pipeline was successfully tested:
+The complete pipeline was tested:
 
-```text id="f0bzd0"
+```text
 Training
    ↓
 DirectML
@@ -241,4 +302,337 @@ DirectML
 Text generation
 ```
 
-This configuration should remain useful as a lightweight regression test when future DirectML changes are introduced.
+### Decision
+
+The small `128 / 2-layer` configuration is kept as a lightweight validation configuration for future DirectML changes.
+
+New backend changes should be validated end-to-end rather than only through isolated PyTorch operations.
+
+---
+
+# M3 — Training Pipeline Compatibility
+
+## Reward Model Fails on DirectML
+
+### Problem
+
+During GRPO training, the reward model works correctly on CPU but fails when executed on DirectML.
+
+The main MiniMind model can run on DirectML, but forcing the reward model onto the same device causes the training workflow to fail.
+
+Conceptually:
+
+```text
+Trainable model → DirectML
+Reward model    → DirectML
+                      ↓
+             incompatible operation
+                      ↓
+                    crash
+```
+
+### Cause
+
+The reward-model inference path uses operations that are not reliably supported by the DirectML backend.
+
+The original device handling also assumed that all models participating in the training workflow could share the same execution device.
+
+This assumption does not hold for the DirectML GRPO pipeline.
+
+### Solution
+
+The reward model is kept on CPU while the trainable MiniMind model remains on DirectML:
+
+```text
+Trainable MiniMind model
+          ↓
+       DirectML
+
+Reward model
+          ↓
+         CPU
+```
+
+Reward-model inputs are placed on the reward model's device before inference.
+
+The resulting reward values are transferred to the training device when required by the GRPO computation.
+
+Conceptually:
+
+```text
+Generated samples
+       ↓
+Move reward inputs to CPU
+       ↓
+Reward model inference
+       ↓
+Reward scores
+       ↓
+Move scores to training device
+       ↓
+GRPO computation on DirectML
+```
+
+### Decision
+
+The reward model intentionally remains on CPU when the main training backend is DirectML.
+
+This is acceptable because the reward model is inference-only and is not updated by the optimizer.
+
+Correctness and stability take priority over forcing every model onto DirectML.
+
+---
+
+## Duplicated Device Handling Across Trainers
+
+### Problem
+
+As DirectML support expanded across the training pipeline, device-specific logic was distributed across individual training scripts.
+
+The reward-model CPU requirement also introduced cases where different components of the same training workflow needed different devices.
+
+Handling this separately in each trainer would duplicate logic and could produce inconsistent behavior.
+
+### Cause
+
+The original workflow could largely assume a common execution device.
+
+DirectML introduces more complex device requirements:
+
+```text
+Trainable model → DirectML
+Reward model    → CPU
+Other tensors   → appropriate component device
+```
+
+Embedding these rules directly into individual trainers would tightly couple training algorithms to backend-specific compatibility code.
+
+### Solution
+
+Shared device-handling logic was centralized in the trainer utilities.
+
+The shared utilities handle backend/device compatibility while individual trainers remain focused on their training-stage logic.
+
+The intended separation is:
+
+```text
+Training script
+      ↓
+Training-stage logic
+
+trainer/utils
+      ↓
+Device and backend compatibility
+```
+
+This provides a common location for:
+
+* device resolution;
+* DirectML initialization;
+* model placement;
+* component-specific device handling;
+* future backend compatibility rules.
+
+### Decision
+
+Backend compatibility should be centralized in shared trainer infrastructure whenever possible.
+
+Individual trainers should not duplicate DirectML-specific device-management logic.
+
+---
+
+## Empty Token Handling During Generation
+
+### Problem
+
+During generation-based training, a generated result could produce an empty token sequence.
+
+Passing an empty generated sequence to downstream processing could result in an invalid or unusable training sample.
+
+This is particularly relevant for training stages that generate outputs before performing additional computations such as reward evaluation.
+
+### Cause
+
+The generation path assumed that generated outputs would always contain usable token content.
+
+No shared protection guaranteed that the token sequence remained valid after generation and subsequent extraction or processing.
+
+Conceptually:
+
+```text
+Model generation
+      ↓
+Generated tokens
+      ↓
+Empty sequence
+      ↓
+Downstream processing
+      ↓
+Invalid sample
+```
+
+### Solution
+
+Empty-token handling was added to the shared trainer utilities.
+
+Generated token sequences are checked before being passed to downstream training logic.
+
+If generation results in an empty sequence, a safe fallback is used instead of allowing the invalid sequence to propagate.
+
+Conceptually:
+
+```text
+Model generation
+      ↓
+Generated tokens
+      ↓
+Empty?
+   ↙       ↘
+ Yes       No
+  ↓         ↓
+Fallback   Continue
+   ↘       ↙
+Valid token sequence
+      ↓
+Downstream training
+```
+
+### Decision
+
+Shared generation utilities must not return an unusable empty token sequence to downstream training logic.
+
+The protection belongs in the common trainer utilities rather than in GRPO, PPO, or another individual trainer.
+
+This prevents multiple generation-based training stages from implementing separate fixes for the same edge case.
+
+---
+
+## Checkpoint Compatibility Across Training Stages
+
+### Problem
+
+MiniMind uses multiple training stages, including pretraining, SFT, DPO, GRPO, and PPO.
+
+Changes introduced while adding DirectML support could unintentionally affect model initialization or checkpoint loading and break compatibility between stages.
+
+A training stage working correctly on DirectML does not by itself guarantee that its checkpoints remain compatible with the rest of the MiniMind pipeline.
+
+### Cause
+
+Training stages depend on compatible model architectures and state dictionaries.
+
+DirectML support modifies device initialization and model placement, but those changes must remain independent from checkpoint structure.
+
+The following concerns must remain separated:
+
+```text
+Device handling
+      ↓
+must not modify
+      ↓
+Model architecture
+Checkpoint format
+State dictionary semantics
+```
+
+### Solution
+
+Checkpoint compatibility is validated independently from DirectML execution.
+
+Compatibility tests ensure that DirectML-related changes do not alter the checkpoint format or expected state dictionaries used across the training stages.
+
+### Decision
+
+DirectML must not introduce a backend-specific checkpoint format.
+
+Existing MiniMind checkpoint semantics are preserved so that checkpoints remain interoperable between training stages regardless of the execution device.
+
+---
+
+# General Decisions
+
+## Keep DirectML Changes Close to Upstream
+
+DirectML support should modify as little of the original MiniMind training logic as possible.
+
+Prefer:
+
+```python
+device = ...
+model.to(device)
+tensor.to(device)
+```
+
+and shared compatibility utilities over DirectML-specific copies of existing pipelines.
+
+This reduces divergence from upstream MiniMind and makes future maintenance easier.
+
+---
+
+## Separate Backend Compatibility From Training Logic
+
+Backend-specific behavior belongs in shared infrastructure when possible.
+
+The desired architecture is:
+
+```text
+Training algorithms
+        ↓
+Generic training logic
+
+Shared trainer utilities
+        ↓
+Device / backend compatibility
+
+PyTorch
+        ↓
+CPU / CUDA / DirectML
+```
+
+This became particularly important during M3 when different components required different execution devices.
+
+---
+
+## Accept CPU Fallbacks When Necessary
+
+Using DirectML does not require every operation involved in training to execute on the GPU.
+
+A mixed execution path is acceptable when required for compatibility:
+
+```text
+Main training → DirectML
+Unsupported optimizer operation → CPU fallback
+Reward model → CPU
+```
+
+The priority is:
+
+```text
+Correctness
+    ↓
+Stability
+    ↓
+Compatibility
+    ↓
+Performance optimization
+```
+
+CPU execution should only be treated as a problem when it unnecessarily prevents GPU acceleration or creates a significant performance bottleneck.
+
+---
+
+## Preserve MiniMind Checkpoint Semantics
+
+DirectML is an execution backend and should not affect the logical representation of a MiniMind model.
+
+Therefore:
+
+```text
+CPU checkpoint
+DirectML checkpoint
+CUDA checkpoint
+```
+
+should not become separate checkpoint formats.
+
+Model architecture and training stage determine checkpoint compatibility, not the device used to execute the model.

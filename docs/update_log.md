@@ -31,3 +31,25 @@ For technical problems, causes, and solutions, see `project_memory.md`.
 * Validated evaluation on DirectML.
 * Validated text generation on DirectML.
 * Confirmed the complete training-to-evaluation DirectML workflow.
+
+---
+
+## M3 — Training Pipeline Compatibility
+
+* Extended device-aware handling across the MiniMind training utilities.
+* Removed remaining assumptions that model execution always uses CUDA.
+* Updated trainer utilities to handle DirectML devices consistently.
+* Added device-aware reward model handling for alignment training workflows.
+* Ensured reward model inputs and model execution use compatible devices.
+* Added handling for empty token sequences to prevent invalid model inputs during reward computation.
+* Improved compatibility of the training pipeline across pretraining, SFT, DPO and GRPO workflows.
+* Added checkpoint compatibility tests for:
+
+  * pretraining;
+  * full SFT;
+  * DPO;
+  * GRPO.
+* Validated checkpoint save/load compatibility across the supported training workflows.
+* Ran the complete test suite successfully with **34 tests passing**.
+* Documented known DirectML limitations and expected CPU fallbacks.
+* Confirmed that the codebase is ready for full training validation on DirectML.
