@@ -765,3 +765,80 @@ Cross-trainer smoke validation
 
 DirectML still has backend limitations and CPU fallbacks, but they do
 not prevent practical training with the validated configuration.
+
+
+------------------------------------------------------------------------
+
+# MoE DirectML Validation
+
+The final M4 smoke workflow was extended to cover the MiniMind MoE
+configuration in addition to the Dense model.
+
+The tested `768 / 8-layer` MoE model reports approximately:
+
+``` text
+Model Params: 198.42M-A63.94M
+```
+
+DirectML exposed a compatibility issue in the upstream sparse expert
+routing path. The affected routing operations required scatter behavior
+that was not supported reliably by the DirectML forward/backward path.
+
+A DirectML-specific scatter-free routing path was therefore introduced.
+CPU and CUDA keep the original sparse routing behavior.
+
+The DirectML compatibility path computes all experts and combines their
+outputs using the selected routing weights. It is intended as a
+functional compatibility fallback and should not be interpreted as
+native sparse-MoE performance.
+
+The following workflows completed successfully:
+
+``` text
+MoE Pretrain
+MoE Full SFT
+Dense student ← MoE teacher Distillation
+```
+
+A separate bounded 20-step MoE pretraining run also remained finite.
+
+A short Dense/MoE comparison under identical small validation settings
+produced a preliminary runtime ratio of approximately:
+
+``` text
+MoE / Dense ≈ 1.158×
+```
+
+or about `15.8%` additional runtime in that experiment.
+
+This value is only a short relative observation and is not considered a
+full MoE performance benchmark.
+
+------------------------------------------------------------------------
+
+# Final Cross-Trainer Smoke Result
+
+After adding Dense and MoE coverage and resolving the remaining Agent
+compatibility issues, the final DirectML trainer smoke runner completed:
+
+``` text
+All trainer smoke tests passed
+Passed: 9/9
+```
+
+The final runner validates:
+
+``` text
+Dense Pretrain
+Dense Full SFT
+MoE Pretrain
+MoE Full SFT
+LoRA
+Distillation
+GRPO
+Agent RL
+PPO
+```
+
+DPO remains part of the previously validated training pipeline but is
+not included in this specific 9-test runner.

@@ -247,6 +247,27 @@ Final M4 validation additionally:
 -   validated all trainers included in that smoke suite successfully;
 -   concluded that the tested DirectML configuration is practically
     viable.
+-   extended the smoke workflow with Dense and MoE pretraining / Full
+    SFT coverage;
+-   identified unsupported scatter behavior in the upstream sparse MoE
+    routing path on DirectML;
+-   added a DirectML-specific scatter-free MoE compatibility path while
+    preserving the original CPU/CUDA sparse routing;
+-   validated MoE Pretrain, MoE Full SFT, and Dense-student/MoE-teacher
+    Distillation;
+-   fixed Agent RL DataLoader multiprocessing on Windows by moving
+    `collate_fn` to module scope;
+-   isolated Agent FP16 NaNs to policy/reference full-sequence
+    recomputation using the attention mask;
+-   avoided the problematic attention-mask path for the validated
+    right-padded Agent recomputation and retained FP32 for numerically
+    sensitive RL calculations;
+-   completed the final DirectML trainer smoke suite successfully:
+
+``` text
+All trainer smoke tests passed
+Passed: 9/9
+```
 
 M4 is complete. The project now moves to **M5 --- Project
 Finalization**.

@@ -537,3 +537,112 @@ trainable DirectML workflows.
 
 Heavy trainer smoke tests are executed explicitly rather than being
 treated as ordinary lightweight Pytest tests.
+
+
+------------------------------------------------------------------------
+
+# MoE Routing Uses Unsupported Scatter Behavior on DirectML
+
+## Problem
+
+The upstream MoE routing path failed during DirectML validation.
+
+The first observed failure occurred around the auxiliary expert-routing
+logic using `F.one_hot`. Replacing that operation alone allowed the
+forward pass to progress, but backward execution still encountered
+unsupported scatter behavior in the sparse routing path.
+
+## Cause
+
+The upstream sparse MoE implementation relies on indexed routing and
+scatter-like operations that are not fully supported by the tested
+DirectML forward/backward path.
+
+## Solution
+
+A DirectML-specific scatter-free routing path was added.
+
+Conceptually:
+
+``` text
+Gate scores
+    ↓
+Top-k expert selection
+    ↓
+Broadcast routing mask
+    ↓
+Differentiable routing weights
+    ↓
+Evaluate experts
+    ↓
+Weighted expert combination
+```
+
+CPU and CUDA retain the original sparse routing implementation.
+
+## Decision
+
+DirectML uses the scatter-free MoE compatibility path.
+
+The fallback prioritizes correct execution over sparse-MoE efficiency
+and therefore should not be used to infer native sparse-MoE performance.
+
+------------------------------------------------------------------------
+
+# Agent RL Compatibility on Windows and DirectML FP16
+
+## Problem
+
+Agent RL encountered two independent issues during the final M4 smoke
+validation.
+
+First, Windows DataLoader workers failed to import a locally defined
+`collate_fn`.
+
+Second, after fixing multiprocessing, the first Agent training step
+produced a non-finite loss.
+
+## Cause
+
+Windows multiprocessing uses process spawning, so the DataLoader
+`collate_fn` must be importable from module scope.
+
+For the numerical failure, targeted finite-value checks showed:
+
+``` text
+rewards     = finite
+advantages  = finite
+behavior    = finite
+policy      = non-finite
+reference   = non-finite
+```
+
+Additional checks confirmed that policy logits contained NaNs during the
+full-sequence policy/reference recomputation path using
+`attention_mask=full_mask`.
+
+Rollout generation itself remained finite.
+
+## Solution
+
+The Agent `collate_fn` was moved to module scope for Windows
+multiprocessing compatibility.
+
+For the right-padded Agent batches, policy and reference full-sequence
+recomputation avoid the problematic DirectML FP16 attention-mask path.
+
+Numerically sensitive log-probability, KL, and ratio calculations are
+performed in FP32.
+
+## Decision
+
+The Agent-specific compatibility handling is retained because it fixes
+the DirectML FP16 path without requiring a broader change to MiniMind
+attention semantics.
+
+After these changes, Agent RL passed and the consolidated smoke suite
+completed successfully with:
+
+``` text
+Passed: 9/9
+```

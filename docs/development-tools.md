@@ -205,8 +205,10 @@ python tests/test_all_trainers.py
 The runner currently validates:
 
 ``` text
-Pretrain
-Full SFT
+Dense Pretrain
+Dense Full SFT
+MoE Pretrain
+MoE Full SFT
 LoRA
 Distillation
 GRPO
@@ -220,7 +222,11 @@ so the standard MiniMind relative paths remain valid.
 
 The smoke suite stops on the first failure and reports the number of
 completed trainers. The complete M4 validation run passed for all
-trainers included in this suite.
+trainers included in this suite:
+
+``` text
+Passed: 9/9
+```
 
 This runner is intentionally executed separately from the normal
 `pytest -q` suite because it launches real DirectML training workloads

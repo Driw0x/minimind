@@ -103,11 +103,14 @@ and identify the main performance bottlenecks.
 -   [x] Evaluate stability during sustained training
 -   [x] Determine whether DirectML training is practically viable
 -   [x] Document known performance limitations
+-   [x] Validate Dense and MoE DirectML training paths
+-   [x] Validate the complete cross-trainer smoke runner (`9/9`)
 
 > M4 is complete. The final DirectML FP16 reference uses `8 × 340`,
 > gradient accumulation `8`, static loss scale `1024`, and AdamW epsilon
 > `1e-4`. A 1000-step sustained pretraining run completed with finite
-> losses, and the consolidated DirectML FP16 trainer smoke suite passed.
+> losses, and the consolidated DirectML FP16 trainer smoke suite passed
+> all `9/9` included workflows, including Dense and MoE validation.
 > The tested configuration is considered practically viable.
 
 ------------------------------------------------------------------------

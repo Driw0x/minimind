@@ -61,6 +61,17 @@ The corrected 100-step benchmark achieved approximately
 completed with finite losses throughout, and final FP16 monitoring
 measured approximately `7.77 GB` peak dedicated VRAM.
 
+The final consolidated DirectML trainer smoke suite also completed
+successfully:
+
+``` text
+All trainer smoke tests passed
+Passed: 9/9
+```
+
+The final runner includes Dense and MoE Pretrain / Full SFT, LoRA,
+Distillation, GRPO, Agent RL, and PPO.
+
 The project is now in **M5 --- Project Finalization**.
 
 See the [project roadmap](docs/roadmap.md) for the complete development
@@ -153,9 +164,10 @@ For the heavier end-to-end DirectML trainer smoke validation, run:
 python tests/test_all_trainers.py
 ```
 
-This explicitly launches bounded DirectML FP16 runs for Pretrain, Full
-SFT, LoRA, Distillation, GRPO, Agent RL, and PPO. The final M4 run
-passed for all trainers included in this suite. It is kept separate from
+This explicitly launches bounded DirectML FP16 runs for Dense Pretrain,
+Dense Full SFT, MoE Pretrain, MoE Full SFT, LoRA, Distillation, GRPO,
+Agent RL, and PPO. The final M4 run passed all `9/9` trainers included
+in this suite. It is kept separate from
 the normal `pytest -q` workflow because it performs real training
 workloads.
 
@@ -293,6 +305,9 @@ Changes include:
 -   bounded `--max_steps` validation across the main trainable
     workflows;
 -   explicit cross-trainer DirectML smoke validation;
+-   DirectML-compatible MoE routing fallback for unsupported scatter
+    behavior;
+-   Windows and DirectML FP16 compatibility fixes for Agent RL;
 -   development utilities for DirectML compatibility auditing;
 -   sequential training utilities for Windows and DirectML;
 -   dependency changes for a CUDA-free Windows environment.

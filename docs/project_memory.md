@@ -564,3 +564,83 @@ cross-trainer smoke validation.
 
 The conclusion is specific to the validated hardware and configuration
 and should not be generalized into universal DirectML limits.
+
+
+------------------------------------------------------------------------
+
+## DirectML MoE Requires a Compatibility Routing Path
+
+The upstream sparse MoE path relies on routing operations that trigger
+unsupported scatter behavior on the tested DirectML backend.
+
+The retained architecture is:
+
+``` text
+CPU / CUDA → original sparse MoE routing
+DirectML   → scatter-free compatibility routing
+```
+
+The DirectML path computes all experts and combines them through the
+selected routing weights.
+
+### Lesson
+
+Backend compatibility may require a localized implementation fallback
+when an upstream sparse operation is not supported.
+
+The fallback should remain isolated to DirectML so that upstream CPU and
+CUDA behavior is preserved.
+
+------------------------------------------------------------------------
+
+## Agent RL Requires Windows and FP16-Specific Compatibility Handling
+
+Windows DataLoader workers require the Agent `collate_fn` to be defined
+at module scope.
+
+DirectML FP16 validation also showed that rollout behavior can remain
+finite while masked full-sequence policy/reference recomputation becomes
+non-finite.
+
+For the validated right-padded Agent batches, the problematic
+full-sequence attention mask is omitted during policy/reference
+recomputation, while numerically sensitive log-probability and RL ratio
+calculations use FP32.
+
+### Lesson
+
+Generation-time stability does not guarantee that full-sequence
+recomputation follows an equally stable backend path.
+
+The two paths should be validated independently.
+
+------------------------------------------------------------------------
+
+## Final Cross-Trainer M4 Validation
+
+The final explicit DirectML smoke runner completed:
+
+``` text
+All trainer smoke tests passed
+Passed: 9/9
+```
+
+The runner covers:
+
+``` text
+Dense Pretrain
+Dense Full SFT
+MoE Pretrain
+MoE Full SFT
+LoRA
+Distillation
+GRPO
+Agent RL
+PPO
+```
+
+DPO remains previously validated but outside this specific runner.
+
+### Decision
+
+The `9/9` result is the final M4 cross-trainer smoke reference.

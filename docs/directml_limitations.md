@@ -26,6 +26,12 @@ Performance measurements are documented in
 
   CUDA AMP / autocast             Not used on   DirectML FP16 uses static
                                   DirectML      loss scaling
+
+  Sparse MoE routing              Partial       Scatter-free DirectML
+                                                compatibility path
+
+  Agent full-sequence attention   Partial       Avoid problematic mask for
+  mask in FP16                                  right-padded recomputation
   ---------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -177,6 +183,34 @@ sustained training.
 
 Detailed measurements and historical results are maintained in
 [`directml_benchmarks.md`](directml_benchmarks.md).
+
+------------------------------------------------------------------------
+
+
+# MoE Sparse Routing
+
+The upstream sparse MoE routing path relies on scatter-like operations
+that are not fully supported by the tested DirectML forward/backward
+path.
+
+DirectML therefore uses a scatter-free compatibility path, while CPU and
+CUDA retain the original sparse routing implementation.
+
+The DirectML fallback computes all experts and should not be interpreted
+as native sparse-MoE performance.
+
+------------------------------------------------------------------------
+
+# Agent RL Full-Sequence Attention Mask
+
+During Agent RL validation, rollout generation remained finite while
+policy/reference full-sequence recomputation with
+`attention_mask=full_mask` produced NaN logits in DirectML FP16.
+
+The validated Agent batches use right padding. The DirectML Agent path
+therefore avoids this problematic mask during policy/reference
+recomputation while retaining the response mask used by the training
+objective.
 
 ------------------------------------------------------------------------
 
