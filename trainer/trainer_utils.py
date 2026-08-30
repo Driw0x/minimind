@@ -42,6 +42,20 @@ def get_device(device="auto"):
             raise RuntimeError("DirectML requested but torch-directml is not installed.")
         return torch_directml.device()
 
+    if device.startswith("directml:") or device.startswith("dml:"):
+        if torch_directml is None:
+            raise RuntimeError("DirectML requested but torch-directml is not installed.")
+
+        index = int(device.split(":", 1)[1])
+
+        if index < 0 or index >= torch_directml.device_count():
+            raise ValueError(
+                f"Invalid DirectML device index {index}. "
+                f"Available devices: 0-{torch_directml.device_count() - 1}"
+            )
+
+        return torch_directml.device(index)
+
     return torch.device(device)
 
 
