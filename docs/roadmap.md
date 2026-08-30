@@ -69,11 +69,11 @@ Determine whether DirectML is practically usable for MiniMind training and ident
 
 ### Real training performance
 
-* [ ] Measure real pretraining throughput
-* [ ] Measure iteration time and samples/tokens processed per second
+* [x] Measure real pretraining throughput
+* [x] Measure iteration time and samples/tokens processed per second
 * [ ] Measure GPU memory usage during real training
-* [ ] Compare synthetic benchmark results with real dataset training
-* [ ] Estimate realistic training duration
+* [x] Compare synthetic benchmark results with real dataset training
+* [x] Estimate realistic training duration
 
 ### DirectML bottleneck investigation
 
@@ -85,8 +85,8 @@ Determine whether DirectML is practically usable for MiniMind training and ident
 
 ### Practical viability
 
-* [ ] Test optimized batch size / sequence length configurations
-* [ ] Test longer training runs when performance permits
+* [x] Test optimized batch size / sequence length configurations
+* [x] Test longer training runs when performance permits
 * [ ] Evaluate stability during sustained training
 * [ ] Determine whether DirectML training is practically viable
 * [ ] Document known performance limitations

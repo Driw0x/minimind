@@ -111,33 +111,31 @@ Backend compatibility and checkpoint compatibility should be validated independe
 
 `torch-directml` integrates DirectML through PyTorch's `PrivateUse1` backend.
 
-A DirectML device may therefore appear internally as:
+A DirectML device therefore appears internally as:
 
-```text
-privateuseone:0
-```
+    privateuseone:<index>
 
-rather than `directml:0`.
+The adapter index is preserved between the user-facing DirectML device and PyTorch's internal representation.
+
+For example:
+
+    directml:0 → privateuseone:0
+    directml:1 → privateuseone:1
 
 This is expected behavior.
 
-The user-facing MiniMind device option remains:
+The user-facing MiniMind device options remain:
 
-```text
-directml
-```
+    directml
+    directml:<index>
 
 ### Lesson
 
-Benchmark results should be treated as compatibility indicators rather than performance recommendations.
+Do not treat `privateuseone` as a separate device backend.
 
-Real pretraining confirmed that a configuration can execute successfully on DirectML while remaining impractical for full-scale training.
+It is PyTorch's internal representation of the DirectML device selected through `torch-directml`.
 
-On the tested setup, real pretraining required approximately 5.9 seconds per step, resulting in an estimated runtime of approximately 10.9 days per epoch.
-
-DirectML validation should therefore use bounded real-data training runs with `--max_steps` when full-dataset execution is not practical.
-
-Detailed performance measurements belong in [`directml_benchmarks.md`](directml_benchmarks.md).
+When multiple GPUs are available, the device index is significant and should be preserved when documenting or comparing runs.
 
 ---
 
@@ -208,11 +206,15 @@ A full training run executes for much longer and may encounter different memory,
 
 ### Lesson
 
-Benchmark results should be treated as compatibility indicators.
+Benchmark results should be treated as compatibility indicators rather than performance recommendations.
 
-Final training configurations must be validated with actual training runs.
+Final training configurations must be validated with actual real-data training runs.
 
-Detailed measurements belong in [`directml_benchmarks.md`](directml_benchmarks.md).
+Real pretraining confirmed that a configuration can execute successfully on DirectML while still being impractical for full-scale training because of performance or memory constraints.
+
+DirectML validation should therefore use bounded real-data training runs with `--max_steps` when full-dataset execution is not practical.
+
+Detailed performance measurements belong in [`directml_benchmarks.md`](directml_benchmarks.md).
 
 ---
 

@@ -217,57 +217,225 @@ Benchmarking should be repeated when relevant execution conditions change, inclu
 
 # Real Training Performance
 
-Passing the compatibility benchmark does not imply that a configuration is efficient for full-scale training.
+Passing the compatibility benchmark does not imply that a configuration is stable or efficient for real training.
 
-Real pretraining benchmarks were therefore performed using the actual MiniMind dataset and training pipeline.
+Real pretraining benchmarks were therefore performed using the actual MiniMind pretraining dataset and the full-size pretraining model.
 
 The tested environment used:
 
-* Dataset samples: `1,270,238`
-* Max sequence len: `340`
-* Accumulation steps: `8`
-* Warmup steps: `8`
-* Measured steps: `16`
 * Device: `directml:1`
+* PyTorch device representation: `privateuseone:1`
+* Dataset: `pretrain_t2t_mini.jsonl`
+* Dataset samples: `1,270,238`
+* Hidden size: `768`
+* Hidden layers: `8`
+* Model parameters: approximately `63.91M`
+* Max sequence length: `340`
+* Gradient accumulation steps: `8`
 
-## Batch Size 8
+The benchmark performs real forward passes, backward passes, gradient clipping, and AdamW optimizer steps.
 
-The real training benchmark with `batch_size = 8` and `max_seq_len = 340` showed training steps of approximately `5.5–6.0 seconds per step` after the initial warmup.
+---
 
-This configuration successfully executed the real training workload.
+## Real Training Stability
 
-## Batch Size 16
+Real-data training revealed stability limits that were not visible in the short compatibility benchmark.
 
-The same benchmark with `batch_size = 16` and `max_seq_len = 340` showed training steps of approximately `11 seconds per step` after the initial warmup.
+### Batch Size 32
 
-Doubling the batch size therefore approximately doubled the execution time per training step.
+Configuration:
 
-Because each step also processes approximately twice as many samples, increasing the batch size does not provide a significant throughput improvement in this DirectML environment.
+    batch_size = 32
+    max_seq_len = 340
 
-## Practical Implication
+The training workload started successfully but failed during the second backward pass because of insufficient GPU memory.
 
-The compatibility benchmark demonstrated that configurations up to `16 × 340` are technically supported on the selected dedicated GPU.
+Result:
 
-However, the real training measurements show that larger batch sizes do not necessarily improve effective training throughput.
+    32 × 340 → OOM
 
-Conceptually:
+This configuration is therefore not considered stable for real training on the tested hardware.
 
-`Larger batch size → more samples per step + longer step duration → little or no throughput improvement`
+### Batch Size 16
 
-The optimal DirectML configuration should therefore be selected from real training performance rather than compatibility limits alone.
+Configuration:
 
-In the tested environment, `batch_size = 8` provides a more conservative operating point while maintaining approximately the same effective throughput as `batch_size = 16`.
+    batch_size = 16
+    max_seq_len = 340
+    accumulation_steps = 8
+
+The benchmark completed the first gradient accumulation cycle and optimizer step.
+
+Training then failed during a subsequent backward pass because of insufficient GPU memory.
+
+Result:
+
+    16 × 340 → OOM after first accumulation cycle
+
+This demonstrates that successfully completing several training steps does not guarantee sustained memory stability.
+
+### Batch Size 8
+
+Configuration:
+
+    batch_size = 8
+    max_seq_len = 340
+    accumulation_steps = 8
+
+A bounded 100-step real-training benchmark completed successfully without GPU out-of-memory errors.
+
+The first 8 steps were used as warmup, leaving 92 measured steps.
+
+Result:
+
+    8 × 340 → PASS (100-step bounded run)
+
+This is currently the largest tested configuration that completed the bounded real-training validation successfully.
+
+---
+
+# Reference Real Training Benchmark
+
+The current reference real-training configuration is:
+
+    Device:                   directml:1
+    PyTorch device:           privateuseone:1
+    Dataset samples:          1,270,238
+    Batch size:               8
+    Max sequence length:      340
+    Gradient accumulation:    8
+    Warmup steps:             8
+    Total benchmark steps:    100
+    Measured steps:           92
+
+Measured performance:
+
+    Average iteration time:   5.280 s
+    Samples / second:         1.52
+    Effective tokens / sec:   304.81
+    Padded tokens / sec:      515.17
+    Steps / epoch:            158,780
+    Estimated epoch duration: 232.87 h
+    Estimated epoch duration: 9.70 days
+
+The benchmark therefore indicates that real MiniMind pretraining is technically executable on the tested DirectML hardware, but full-dataset training remains very slow.
+
+At the measured throughput:
+
+    1 epoch  ≈ 9.70 days
+    2 epochs ≈ 19.4 days
+
+These values are estimates based on the bounded benchmark and should not be interpreted as guaranteed full-training runtimes.
+
+---
+
+# Compatibility Benchmark vs Real Training
+
+The compatibility benchmark and the real-training benchmark serve different purposes.
+
+The compatibility benchmark showed:
+
+    8 × 340  → PASS
+    16 × 340 → PASS
+    32 × 128 → PASS
+    32 × 256 → FAIL
+
+However, real-data training showed:
+
+    32 × 340 → OOM
+    16 × 340 → OOM after first accumulation cycle
+     8 × 340 → PASS for 100 bounded steps
+
+The `32 × 340` configuration was not part of the validated compatibility matrix because testing for batch size `32` stopped after `32 × 256` failed.
+
+The important difference is therefore the behavior of `16 × 340`.
+
+It passed the short compatibility benchmark but failed during longer real-data execution.
+
+This confirms:
+
+    Compatibility PASS
+            ≠
+    Sustained training stability
+
+Short compatibility benchmarks remain useful for detecting immediate backend and memory failures, but final training configurations must be validated using real data and multiple gradient accumulation cycles.
+
+---
+
+# Throughput and Batch Size
+
+The real-training experiments also show that increasing batch size does not necessarily improve throughput proportionally on the tested DirectML environment.
+
+With `batch_size = 8`, measured iteration time is approximately:
+
+    5.28 seconds
+
+With `batch_size = 16`, iterations observed before the OOM were approximately:
+
+    11 seconds
+
+Doubling the batch size therefore approximately doubled iteration time while also increasing memory pressure enough to make sustained execution unstable.
+
+The larger configuration consequently provides no clear practical advantage on the tested hardware.
+
+For the current environment, `batch_size = 8` with `max_seq_len = 340` is the preferred real-training validation configuration.
+
+This selection is based on observed real-data stability and throughput rather than on the maximum configuration accepted by the compatibility benchmark.
 
 ---
 
 # DirectML Optimizer Limitation
 
-During real training, PyTorch reports a DirectML fallback for `aten::lerp.Scalar_out`.
+During real training, PyTorch reports a DirectML fallback for:
+
+    aten::lerp.Scalar_out
 
 This operation is currently unsupported by the DirectML backend and falls back to CPU execution during the AdamW optimizer step.
 
-The fallback does not prevent training from running, but it may introduce additional synchronization and performance overhead.
+The fallback does not prevent training from running, but it may introduce synchronization and performance overhead.
 
-Therefore, measured DirectML training performance includes this CPU fallback and should not be interpreted as pure GPU execution performance.
+The reference benchmark includes this fallback and therefore represents the observed end-to-end behavior of the tested training operations rather than pure DirectML GPU execution.
+
+The measured iteration pattern also shows a small periodic increase in execution time around optimizer steps.
+
+Further investigation is required to determine how much of this overhead is specifically caused by the CPU fallback.
+
+---
+
+# Current Performance Conclusion
+
+The M4 real-training benchmarks establish three important observations.
+
+First, compatibility benchmarks are not sufficient to determine sustained training stability.
+
+Second, real MiniMind pretraining with the full-size tested model is computationally expensive on the selected DirectML hardware.
+
+Third, reducing batch size improves memory stability without significantly reducing overall sample throughput.
+
+The current reference configuration is therefore:
+
+    batch_size = 8
+    max_seq_len = 340
+    accumulation_steps = 8
+
+This configuration completed the 100-step bounded real-training benchmark successfully and achieved approximately:
+
+    1.52 samples/s
+    304.81 effective tokens/s
+    5.280 s/iteration
+
+with an estimated full-epoch duration of approximately:
+
+    9.70 days
+
+Full-scale training is therefore technically possible in principle but is not currently considered practical based on the measured runtime.
+
+Further M4 investigation should focus on:
+
+* GPU memory usage;
+* CPU fallback overhead;
+* DirectML synchronization and execution overhead;
+* identification of operations responsible for the observed training cost;
+* possible mitigations for the identified bottlenecks.
 
 ---
