@@ -120,3 +120,23 @@ def test_distillation_loss_backward_on_directml(tiny_config, directml_device):
     assert torch.isfinite(loss).item()
     loss.backward()
     assert any(p.grad is not None for p in student.parameters() if p.requires_grad)
+
+
+def test_distillation_loss_handles_empty_logits():
+    vocab_size = 64
+
+    student_logits = torch.empty((0, vocab_size), requires_grad=True)
+    teacher_logits = torch.empty((0, vocab_size))
+
+    loss = distillation_loss(
+        student_logits,
+        teacher_logits,
+        temperature=1.0,
+    )
+
+    assert loss.item() == 0.0
+    assert loss.requires_grad
+
+    loss.backward()
+
+    assert student_logits.grad is not None

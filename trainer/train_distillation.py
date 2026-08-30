@@ -22,7 +22,23 @@ from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint
 warnings.filterwarnings('ignore')
 
 
+# def distillation_loss(student_logits, teacher_logits, temperature=1.0, reduction='batchmean'):
+#     with torch.no_grad():
+#         teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
+
+#     student_log_probs = F.log_softmax(student_logits / temperature, dim=-1)
+
+#     kl = F.kl_div(
+#         student_log_probs,
+#         teacher_probs,
+#         reduction=reduction
+#     )
+#     return (temperature ** 2) * kl
+
 def distillation_loss(student_logits, teacher_logits, temperature=1.0, reduction='batchmean'):
+    if student_logits.numel() == 0 or teacher_logits.numel() == 0:
+        return student_logits.sum() * 0.0
+
     with torch.no_grad():
         teacher_probs = F.softmax(teacher_logits / temperature, dim=-1).detach()
 
@@ -33,8 +49,8 @@ def distillation_loss(student_logits, teacher_logits, temperature=1.0, reduction
         teacher_probs,
         reduction=reduction
     )
-    return (temperature ** 2) * kl
 
+    return (temperature ** 2) * kl
 
 def train_epoch(epoch, loader, iters, teacher_model, lm_config_student, start_step=0, wandb=None, alpha=0.0, temperature=1.0):
     start_time = time.time()
