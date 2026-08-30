@@ -5,6 +5,7 @@ $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $TrainerDir = Join-Path $ProjectRoot "trainer"
 $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 
+$Device = "directml:1"
 $TimeoutSeconds = 300
 $MaxSteps = 5
 
@@ -38,6 +39,7 @@ try {
             Write-Host ""
             Write-Host "========================================"
             Write-Host "Testing DirectML"
+            Write-Host "device      = $Device"
             Write-Host "batch_size  = $Batch"
             Write-Host "max_seq_len = $Seq"
             Write-Host "max_steps   = $MaxSteps"
@@ -46,7 +48,7 @@ try {
 
             $Arguments = @(
                 "train_pretrain.py",
-                "--device", "directml",
+                "--device", "$Device",
                 "--hidden_size", "768",
                 "--num_hidden_layers", "8",
                 "--use_moe", "0",
@@ -99,9 +101,17 @@ try {
             }
             else {
 
-                $Output = Receive-Job $Job
+                # Receive stderr without letting a Python error
+                # terminate the PowerShell benchmark.
+                $PreviousErrorActionPreference = $ErrorActionPreference
+                $ErrorActionPreference = "Continue"
+
+                $Output = Receive-Job $Job -ErrorAction Continue 2>&1
+
+                $ErrorActionPreference = $PreviousErrorActionPreference
 
                 foreach ($Line in $Output) {
+
                     if (
                         $Line -isnot [PSCustomObject] -or
                         $Line.Marker -ne "BENCHMARK_EXIT"
@@ -146,7 +156,7 @@ try {
                     }
                 }
 
-                Remove-Job $Job
+                Remove-Job $Job -Force
             }
 
             $Results += [PSCustomObject]@{
@@ -156,21 +166,30 @@ try {
                 ExitCode  = $ExitCode
             }
 
-            # Failure at the smallest sequence length for this batch:
-            # larger batches are not useful to test.
-            if ($Status -ne "PASS" -and $Seq -eq $Sequences[0]) {
+            # -------------------------------------------------
+            # Failure on the smallest sequence for this batch:
+            # stop testing larger batches.
+            # -------------------------------------------------
+
+            if (
+                $Status -ne "PASS" -and
+                $Seq -eq $Sequences[0]
+            ) {
 
                 Write-Host ""
                 Write-Host "Smallest sequence failed for batch $Batch."
-                Write-Host "Stopping benchmark before testing larger batches."
+                Write-Host "Stopping benchmark before larger batches."
 
                 $StopBenchmark = $true
                 break
             }
 
-            # Failure at a larger sequence length:
-            # skip larger sequences for this batch,
-            # but continue with the next batch at its smallest sequence.
+            # -------------------------------------------------
+            # Failure on a larger sequence:
+            # skip remaining sequence lengths for this batch,
+            # then continue with the next batch.
+            # -------------------------------------------------
+
             if ($Status -ne "PASS") {
 
                 Write-Host ""
@@ -185,12 +204,14 @@ try {
     }
 }
 finally {
+
     Set-Location $OriginalLocation
 }
 
 Write-Host ""
 Write-Host "========================================"
 Write-Host "DirectML compatibility results"
+Write-Host "Device: $Device"
 Write-Host "========================================"
 Write-Host ""
 
