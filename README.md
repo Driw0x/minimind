@@ -41,89 +41,17 @@ The main training pipeline has been validated with DirectML, including:
 - knowledge distillation;
 - checkpoint compatibility between training stages.
 
-The automated test suite currently passes successfully:
-
-```text
-34 passed
-```
-
 Some operations still require CPU fallback or have limited DirectML support.
 
-See [`docs/directml-limitations.md`](docs/directml-limitations.md) for details.
+See [DirectML limitations](docs/directml-limitations.md) for currently known compatibility limitations.
 
 The project is currently moving into **M4 — Performance & Stability**.
 
----
-
-## Roadmap
-
-The DirectML adaptation is developed incrementally to ensure that each part of the MiniMind pipeline is validated on Windows before moving to the next stage.
-
-### M1 — DirectML Foundation ✅
-
-Establish and validate the basic DirectML environment.
-
-- [x] Set up a Windows + DirectML environment
-- [x] Replace the CUDA-oriented PyTorch dependency with `torch-directml`
-- [x] Initialize a DirectML device
-- [x] Move MiniMind models and tensors to DirectML
-- [x] Validate the forward pass
-- [x] Validate loss computation
-- [x] Validate the backward pass
-- [x] Validate the AdamW optimizer step
-- [x] Add DirectML compatibility tests with Pytest
-- [x] Validate installation from a clean virtual environment
-
-### M2 — MiniMind Training on DirectML 🚧
-
-Adapt the actual MiniMind training pipeline to run on DirectML.
-
-- [x] Audit CUDA-specific code in the training pipeline
-- [x] Introduce DirectML-compatible device handling
-- [x] Adapt mixed precision and CUDA-specific utilities where necessary
-- [x] Run a minimal pretraining job on DirectML
-- [x] Verify that the training loss evolves correctly
-- [x] Save a model checkpoint
-- [x] Reload the checkpoint successfully
-- [x] Run inference using the trained checkpoint
-
-### M3 — Full Training Pipeline
-
-Validate the main MiniMind training stages with DirectML.
-
-- [x] Validate pretraining
-- [x] Validate supervised fine-tuning (SFT)
-- [x] Validate LoRA training
-- [x] Validate additional training stages supported by MiniMind
-- [x] Validate checkpoint compatibility between training stages
-- [x] Document unsupported or partially supported DirectML operations
-
-### M4 — Performance & Stability
-
-Evaluate the practical usability of MiniMind with DirectML.
-
-- [ ] Measure GPU memory usage
-- [ ] Measure training throughput
-- [ ] Identify CPU fallback operations
-- [ ] Evaluate the performance impact of CPU fallbacks
-- [ ] Test longer training runs
-- [ ] Improve stability and error handling
-- [ ] Document known limitations
-
-### M5 — DirectML-ready Release
-
-Prepare the fork for reproducible use by other Windows users.
-
-- [ ] Finalize installation documentation
-- [ ] Document the supported training workflows
-- [ ] Add troubleshooting documentation
-- [ ] Clean up remaining CUDA assumptions
-- [ ] Validate the project from a fresh clone
-- [ ] Publish the first stable DirectML-ready version
+See the [project roadmap](docs/roadmap.md) for the complete development plan.
 
 ---
 
-## Tested Configuration
+## Tested configuration
 
 DirectML compatibility has currently been validated on the following configuration:
 
@@ -181,41 +109,29 @@ The dependencies of this fork include `torch-directml` for DirectML support.
 
 ---
 
-## DirectML compatibility test
+## DirectML compatibility tests
 
-The repository includes a Pytest test suite for the basic DirectML execution pipeline.
+The repository includes an automated Pytest suite covering the DirectML adaptation and the main MiniMind training pipeline.
 
-Run:
+Run the complete test suite from the project root:
 
 ```bash
-pytest tests/test_directml.py -v
+pytest -q
 ```
 
-The tests currently verify:
+The test suite covers:
 
-```text
-DirectML device
-      ↓
-MiniMind model on DirectML
-      ↓
-Input tensor on DirectML
-      ↓
-Forward pass
-      ↓
-Loss computation
-      ↓
-Backward pass
-      ↓
-AdamW optimizer step
-```
+- DirectML device handling;
+- model and tensor placement;
+- forward and backward passes;
+- optimizer execution;
+- dataset fixtures;
+- training smoke tests;
+- checkpoint compatibility between training stages.
 
-A successful execution should currently report:
+A warning related to `aten::lerp.Scalar_out` may appear because this operation is not currently supported natively by the DirectML backend and falls back to CPU execution.
 
-```text
-6 passed
-```
-
-A warning related to `aten::lerp.Scalar_out` may also appear because this operation falls back to CPU execution.
+See [DirectML limitations](docs/directml-limitations.md) for details about known fallbacks and compatibility constraints.
 
 ---
 
@@ -228,17 +144,18 @@ minimind/
 ├── dataset/                 # Dataset loading and training data
 │
 ├── docs/                    # Project and DirectML documentation
-│   └── original/            # Original MiniMind documentation
+│   ├── original/            # Original MiniMind documentation
 │   ├── development-tools.md
 │   ├── directml_audit.md
 │   ├── directml-limitations.md
 │   ├── project_memory.md
+│   ├── roadmap.md
 │   └── update_log.md
 │
 ├── images/                  # Project images and resources
 ├── model/                   # MiniMind model implementation
 ├── out/                     # Generated model weights (not tracked)
-├── scripts/                 # Utility, evaluation and API scripts
+├── scripts/                 # Development, evaluation and API utilities
 ├── tests/                   # Automated compatibility tests
 │   └── fixtures/            # Small deterministic test datasets
 │
@@ -254,15 +171,24 @@ Generated model weights and training checkpoints are local runtime artifacts and
 
 ---
 
-## Development documentation
+## Documentation
 
-Additional documentation is available for the DirectML adaptation and development tools:
+Detailed technical information about the DirectML adaptation is maintained separately in `docs/`.
 
-- [DirectML limitations](docs/directml-limitations.md) — known DirectML limitations, unsupported operations, and CPU fallbacks.
-- [DirectML audit](docs/directml_audit.md) — generated compatibility audit of CUDA-specific code and potential DirectML issues.
-- [Development tools](docs/development-tools.md) — usage of the DirectML audit and deterministic test fixture generation utilities.
-- [Project memory](docs/project_memory.md) — technical issues encountered during each milestone, their causes, and implemented solutions.
-- [Update log](docs/update_log.md) — chronological overview of the DirectML adaptation progress.
+### DirectML
+
+- [DirectML limitations](docs/directml-limitations.md) — known limitations, unsupported operations, and CPU fallbacks.
+- [DirectML audit](docs/directml_audit.md) — generated audit of CUDA-specific code and potential DirectML compatibility concerns.
+
+### Development
+
+- [Roadmap](docs/roadmap.md) — development milestones and current project progression.
+- [Development tools](docs/development-tools.md) — DirectML audit, deterministic test fixture generation, and sequential training with `train_all.ps1`.
+
+### Project history
+
+- [Project memory](docs/project_memory.md) — technical problems encountered during development, their causes, and implemented solutions.
+- [Update log](docs/update_log.md) — chronological record of the main changes made to the DirectML adaptation.
 
 ---
 
@@ -274,8 +200,8 @@ The original MiniMind README files are preserved in:
 docs/original/
 ```
 
-- Chinese documentation: [`docs/original/README.md`](docs/original/README.md)
-- English documentation: [`docs/original/README_en.md`](docs/original/README_en.md)
+- Chinese documentation: [docs/original/README.md](docs/original/README.md)
+- English documentation: [docs/original/README_en.md](docs/original/README_en.md)
 
 These files contain the original project documentation, examples, and usage instructions.
 
@@ -285,14 +211,17 @@ These files contain the original project documentation, examples, and usage inst
 
 This fork focuses specifically on Windows and DirectML support.
 
-Changes may include:
+Changes include:
 
 - DirectML device detection and initialization;
-- replacement of CUDA-specific device handling;
+- replacement or guarding of CUDA-specific device handling;
 - DirectML-compatible tensor and model placement;
-- adaptations to training scripts;
-- handling or documentation of unsupported DirectML operators;
-- DirectML-specific compatibility tests;
+- adaptations to the MiniMind training pipeline;
+- handling and documentation of unsupported DirectML operators;
+- DirectML-specific compatibility and training tests;
+- deterministic fixtures for lightweight training validation;
+- development utilities for DirectML compatibility auditing;
+- sequential training utilities for Windows and DirectML;
 - dependency changes for a CUDA-free Windows environment.
 
 The adaptation is being implemented progressively, so not every MiniMind feature should currently be assumed to work with DirectML.
@@ -313,4 +242,4 @@ This fork provides additional modifications aimed at Windows and DirectML compat
 
 This fork retains the license of the original MiniMind project.
 
-See [`LICENSE`](LICENSE) for the applicable license terms.
+See [LICENSE](LICENSE) for the applicable license terms.
