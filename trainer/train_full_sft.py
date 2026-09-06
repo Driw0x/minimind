@@ -16,7 +16,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
 
 warnings.filterwarnings('ignore')
 
@@ -48,7 +48,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             scaler,
             args.device,
             args.dtype,
-            args.directml_loss_scale
+            args.directml_loss_scale,
+            master_params=master_params
         )
 
         if step % args.accumulation_steps == 0:
@@ -59,7 +60,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
                 args.grad_clip,
                 args.device,
                 args.dtype,
-                args.directml_loss_scale
+                args.directml_loss_scale,
+                master_params=master_params
             )
 
         if step % args.log_interval == 0 or step == iters:
@@ -80,8 +82,12 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
             torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler)
+            checkpoint_kwargs = {}
+            if master_params is not None:
+                checkpoint_kwargs['master_weights'] = export_fp32_master_weights(master_params)
+            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler,
+                         **checkpoint_kwargs)
             model.train()
             del state_dict
 
@@ -99,7 +105,8 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             args.grad_clip,
             args.device,
             args.dtype,
-            args.directml_loss_scale
+            args.directml_loss_scale,
+            master_params=master_params
         )
 
 
@@ -165,10 +172,11 @@ if __name__ == "__main__":
     train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = create_grad_scaler(args.device, args.dtype)
+    master_params = create_fp32_master_params(model) if directml_fp16 else None
     optimizer = optim.AdamW(
-        model.parameters(),
+        master_params if master_params is not None else model.parameters(),
         lr=args.learning_rate,
-        eps=get_adamw_epsilon(
+        eps=1e-8 if master_params is not None else get_adamw_epsilon(
             args.device,
             args.dtype,
             args.directml_adam_eps
@@ -179,14 +187,23 @@ if __name__ == "__main__":
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
+        if master_params is not None:
+            if 'master_weights' not in ckp_data:
+                raise RuntimeError(
+                    "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
+                    "Start a new run with --from_resume 0."
+                )
+            load_fp32_master_weights(master_params, ckp_data['master_weights'])
+            sync_master_to_model(model, master_params)
         optimizer.load_state_dict(ckp_data['optimizer'])
         scaler.load_state_dict(ckp_data['scaler'])
-        configure_optimizer_for_directml_fp16(
-            optimizer,
-            args.device,
-            args.dtype,
-            args.directml_adam_eps
-        )
+        if master_params is None:
+            configure_optimizer_for_directml_fp16(
+                optimizer,
+                args.device,
+                args.dtype,
+                args.directml_adam_eps
+            )
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     

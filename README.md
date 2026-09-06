@@ -50,16 +50,18 @@ The main training pipeline has been validated with DirectML, including:
 Some operations still require CPU fallback or have limited DirectML
 support.
 
-**M4 --- Performance & Stability is complete.** The final DirectML FP16
-reference on `directml:1` uses `batch_size = 8`, `max_seq_len = 340`,
-gradient accumulation `8`, static loss scale `1024`, and AdamW epsilon
-`1e-4`.
+**M4 --- Performance & Stability is complete.** The DirectML reference
+on `directml:1` uses `batch_size = 8`, `max_seq_len = 340`, gradient
+accumulation `8`, and FP16 compute.
 
-The corrected 100-step benchmark achieved approximately
-`0.482 s/iteration`, `16.61 samples/s`, and
-`3341.37 effective tokens/s`. A subsequent 1000-step pretraining run
-completed with finite losses throughout, and final FP16 monitoring
-measured approximately `7.77 GB` peak dedicated VRAM.
+During M5, long-run checkpoint diagnostics identified a silent
+self-copying collapse in the earlier pure-FP16 optimizer path. Dense
+pretraining now uses static loss scale `1024`, FP32 master weights, and
+FP32 AdamW updates with `eps = 1e-8`.
+
+The corrected path was validated through global step `1100`: mean
+teacher-forced loss reached `6.7506`, Top-1 accuracy `6.30%`, and
+Top-1 repeat rate remained low at `0.89%`.
 
 The final consolidated DirectML trainer smoke suite also completed
 successfully:
@@ -303,8 +305,8 @@ Changes include:
 -   DirectML-specific compatibility and training tests;
 -   deterministic fixtures for lightweight training validation;
 -   DirectML compatibility and real-training benchmarking;
--   stable DirectML FP16 handling with static loss scaling and a
-    validated AdamW epsilon;
+-   DirectML FP16 Dense pretraining with static loss scaling and FP32
+    master-weight optimizer updates;
 -   bounded `--max_steps` validation across the main trainable
     workflows;
 -   explicit cross-trainer DirectML smoke validation;

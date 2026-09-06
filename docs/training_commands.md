@@ -29,10 +29,13 @@ DType: float16
 Hidden size: 768
 Layers: 8
 DirectML static loss scale: 1024
-DirectML AdamW epsilon: 1e-4
 Checkpoint interval: 100 iterations
 torch.compile: disabled
 ```
+
+Dense Pretrain additionally uses FP32 master weights with AdamW
+`eps = 1e-8`. Other trainer-specific precision paths remain unchanged
+unless explicitly documented.
 
 ### DirectML validated baseline
 
@@ -46,14 +49,15 @@ Trainer: Dense Pretrain
 batch_size = 8
 max_seq_len = 340
 accumulation_steps = 8
-dtype = float16
+compute dtype = float16
 loss_scale = 1024
-AdamW eps = 1e-4
+optimizer weights = float32 master weights
+AdamW eps = 1e-8
 ```
 
-This `8 × 340` configuration completed the sustained 1000-step DirectML
-pretraining validation. It is a **validated DirectML baseline**, not the
-default configuration of every trainer.
+This `8 × 340` configuration was validated through global step `1100`
+with teacher-forced checkpoint diagnostics. It is a **validated DirectML
+baseline**, not the default configuration of every trainer.
 
 The larger upstream trainer values in the table are therefore training
 targets to validate on DirectML. A short compatibility pass does not
@@ -170,11 +174,10 @@ python train_pretrain.py `
   --hidden_size 768 `
   --num_hidden_layers 8 `
   --use_moe 0 `
-  --batch_size 32 `
+  --batch_size 8 `
   --max_seq_len 340 `
   --accumulation_steps 8 `
   --directml_loss_scale 1024 `
-  --directml_adam_eps 1e-4 `
   --save_interval 100 `
   --from_weight none `
   --use_compile 0
@@ -189,11 +192,10 @@ python train_pretrain.py `
   --hidden_size 768 `
   --num_hidden_layers 8 `
   --use_moe 0 `
-  --batch_size 32 `
+  --batch_size 8 `
   --max_seq_len 340 `
   --accumulation_steps 8 `
   --directml_loss_scale 1024 `
-  --directml_adam_eps 1e-4 `
   --save_interval 100 `
   --from_weight none `
   --from_resume 1 `

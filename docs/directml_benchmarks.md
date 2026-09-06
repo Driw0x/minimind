@@ -842,3 +842,30 @@ PPO
 
 DPO remains part of the previously validated training pipeline but is
 not included in this specific 9-test runner.
+
+------------------------------------------------------------------------
+
+# FP32 Master-Weight Pretraining Validation
+
+A later checkpoint-quality investigation showed that the earlier
+pure-FP16 DirectML optimizer path could remain finite while converging to
+a degenerate self-copying model.
+
+Dense pretraining was therefore changed to use FP16 compute with FP32
+master weights and FP32 AdamW updates.
+
+Teacher-forced diagnostics on the same 32 samples produced:
+
+| Checkpoint | Mean loss | Top-1 accuracy | Top-1 repeat | Mean entropy |
+| --- | ---: | ---: | ---: | ---: |
+| Untrained | 8.8931 | 0.03% | 0.13% | 8.6103 |
+| Previous full pretrain | 13.5668 | 0.18% | 93.48% | 1.2536 |
+| FP32 master, step 100 | 7.4799 | 3.27% | 3.27% | 7.2063 |
+| FP32 master, step 1100 | 6.7506 | 6.30% | 0.89% | 6.3445 |
+
+The new path therefore remains finite while also improving next-token
+prediction quality instead of collapsing toward token repetition.
+
+This validation supersedes finite-loss-only validation for Dense
+DirectML pretraining.
+

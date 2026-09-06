@@ -80,6 +80,59 @@ def prepare_model_precision(model, device, dtype):
     return model.to(device)
 
 
+# DirectML FP16 uses FP32 master weights for optimizer updates.
+def create_fp32_master_params(model):
+    return [
+        torch.nn.Parameter(parameter.detach().float().clone(), requires_grad=True)
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    ]
+
+
+@torch.no_grad()
+def sync_model_to_master(model, master_params):
+    model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+
+    if len(model_params) != len(master_params):
+        raise RuntimeError(
+            f"Model/master parameter count mismatch: "
+            f"{len(model_params)} != {len(master_params)}"
+        )
+
+    for model_param, master_param in zip(model_params, master_params):
+        master_param.copy_(model_param.detach().float())
+
+
+@torch.no_grad()
+def sync_master_to_model(model, master_params):
+    model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+
+    if len(model_params) != len(master_params):
+        raise RuntimeError(
+            f"Model/master parameter count mismatch: "
+            f"{len(model_params)} != {len(master_params)}"
+        )
+
+    for model_param, master_param in zip(model_params, master_params):
+        model_param.copy_(master_param.to(dtype=model_param.dtype))
+
+
+def export_fp32_master_weights(master_params):
+    return [parameter.detach().cpu().float() for parameter in master_params]
+
+
+@torch.no_grad()
+def load_fp32_master_weights(master_params, saved_weights):
+    if len(master_params) != len(saved_weights):
+        raise RuntimeError(
+            f"Saved/master parameter count mismatch: "
+            f"{len(saved_weights)} != {len(master_params)}"
+        )
+
+    for master_param, saved_param in zip(master_params, saved_weights):
+        master_param.copy_(saved_param.to(device=master_param.device, dtype=torch.float32))
+
+
 def create_grad_scaler(device, dtype):
     device = get_device(device)
 
@@ -137,13 +190,53 @@ def optimizer_step(
     device,
     dtype,
     directml_loss_scale=1024.0,
-    check_finite=True
+    check_finite=True,
+    master_params=None
 ):
     if is_directml_fp16(device, dtype):
         if directml_loss_scale <= 0:
             raise ValueError(
                 "DirectML FP16 loss scale must be greater than 0."
             )
+
+        if master_params is not None:
+            model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
+
+            if len(model_params) != len(master_params):
+                raise RuntimeError(
+                    f"Model/master parameter count mismatch: "
+                    f"{len(model_params)} != {len(master_params)}"
+                )
+
+            optimizer.zero_grad(set_to_none=True)
+
+            for model_param, master_param in zip(model_params, master_params):
+                if model_param.grad is None:
+                    master_param.grad = None
+                    continue
+
+                master_param.grad = model_param.grad.detach().float()
+                master_param.grad.div_(directml_loss_scale)
+
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                master_params,
+                grad_clip
+            )
+
+            if check_finite:
+                grad_norm_value = grad_norm.detach().float().cpu().item()
+
+                if not math.isfinite(grad_norm_value):
+                    raise RuntimeError(
+                        f"Non-finite gradient norm detected: {grad_norm_value}"
+                    )
+
+            optimizer.step()
+            sync_master_to_model(model, master_params)
+            optimizer.zero_grad(set_to_none=True)
+            model.zero_grad(set_to_none=True)
+
+            return grad_norm
 
         for parameter in model.parameters():
             if parameter.grad is not None:

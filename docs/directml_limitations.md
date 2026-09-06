@@ -96,19 +96,22 @@ When DirectML is selected, compilation should remain disabled:
 The upstream mixed-precision path relies on CUDA AMP/autocast, which is
 not used for DirectML.
 
-M4 introduced a dedicated DirectML FP16 precision path using:
+Dense DirectML pretraining now uses:
 
 ``` text
-Model dtype:       float16
-Static loss scale: 1024
-AdamW epsilon:     1e-4
+Compute dtype:       float16
+Static loss scale:   1024
+Optimizer weights:   float32 master weights
+AdamW epsilon:       1e-8
 ```
 
-The default AdamW epsilon of `1e-8` was not numerically stable in the
-validated pure-FP16 DirectML path. Static loss scaling alone was
-insufficient; the optimizer epsilon also had to be increased.
+The earlier pure-FP16 optimizer path could remain finite with
+`AdamW epsilon = 1e-4` but was later found to converge toward a
+self-copying model during long pretraining.
 
-This is a backend-specific precision workaround, not CUDA AMP.
+The FP32 master-weight path preserves FP16 compute while keeping
+optimizer updates in FP32. This is a backend-specific precision
+workaround, not CUDA AMP.
 
 ------------------------------------------------------------------------
 

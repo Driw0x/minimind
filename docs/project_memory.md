@@ -683,3 +683,39 @@ Upstream trainer defaults must not be presented as sustained DirectML
 validation results. Periodic resume checkpoints are retained for long
 training runs.
 
+------------------------------------------------------------------------
+
+## Dense DirectML Pretraining Uses FP32 Master Weights
+
+Long-run checkpoint diagnostics showed that the earlier pure-FP16
+DirectML optimizer path could remain finite while producing a degenerate
+self-copying model.
+
+Dense pretraining now keeps FP16 model compute but performs optimizer
+updates through FP32 master weights:
+
+``` text
+FP16 compute
+    ↓
+FP32 gradient unscale
+    ↓
+AdamW FP32 update
+    ↓
+Copy master weights back to FP16 model
+```
+
+The corrected path was validated through global step `1100`. Mean
+teacher-forced loss improved from `8.8931` for an untrained model to
+`6.7506`, Top-1 accuracy reached `6.30%`, and Top-1 repeat rate remained
+low at `0.89%`.
+
+### Decision
+
+Finite losses are not sufficient evidence of correct long-run
+mixed-precision training.
+
+Dense DirectML pretraining keeps FP32 master weights in resume
+checkpoints so optimizer precision is preserved across interruptions.
+Old resume checkpoints without master weights must not be used with the
+new path.
+

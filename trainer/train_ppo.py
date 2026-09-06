@@ -20,7 +20,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -254,12 +254,14 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                         optimizer_step(
                             actor_model, actor_optimizer, scaler,
                             args.grad_clip if args.grad_clip > 0 else float("inf"),
-                            args.device, args.dtype, args.directml_loss_scale
+                            args.device, args.dtype, args.directml_loss_scale,
+                            master_params=actor_master_params
                         )
                         optimizer_step(
                             critic_model, critic_optimizer, scaler,
                             args.grad_clip if args.grad_clip > 0 else float("inf"),
-                            args.device, args.dtype, args.directml_loss_scale
+                            args.device, args.dtype, args.directml_loss_scale,
+                            master_params=critic_master_params
                         )
                     else:
                         scaler.unscale_(actor_optimizer)
@@ -280,12 +282,14 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 optimizer_step(
                     actor_model, actor_optimizer, scaler,
                     args.grad_clip if args.grad_clip > 0 else float("inf"),
-                    args.device, args.dtype, args.directml_loss_scale
+                    args.device, args.dtype, args.directml_loss_scale,
+                    master_params=actor_master_params
                 )
                 optimizer_step(
                     critic_model, critic_optimizer, scaler,
                     args.grad_clip if args.grad_clip > 0 else float("inf"),
-                    args.device, args.dtype, args.directml_loss_scale
+                    args.device, args.dtype, args.directml_loss_scale,
+                    master_params=critic_master_params
                 )
             else:
                 scaler.unscale_(actor_optimizer)
@@ -339,10 +343,15 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             torch.save({k: v.detach().cpu().half() for k, v in actor_state.items()}, ckp)
             
             # 使用 lm_checkpoint 保存完整状态（包括 critic）
-            lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
+            checkpoint_kwargs = {}
+            if actor_master_params is not None:
+                checkpoint_kwargs['master_weights'] = export_fp32_master_weights(actor_master_params)
+                checkpoint_kwargs['critic_master_weights'] = export_fp32_master_weights(critic_master_params)
+            lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer,
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints',
-                         scheduler=actor_scheduler, scaler=scaler, critic_model=critic_model, 
-                         critic_optimizer=critic_optimizer, critic_scheduler=critic_scheduler)
+                         scheduler=actor_scheduler, scaler=scaler, critic_model=critic_model,
+                         critic_optimizer=critic_optimizer, critic_scheduler=critic_scheduler,
+                         **checkpoint_kwargs)
             actor_model.train()
             del actor_state
 
@@ -459,15 +468,17 @@ if __name__ == "__main__":
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=(args.max_seq_len + args.max_gen_len), thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = create_grad_scaler(args.device, args.dtype)
+    actor_master_params = create_fp32_master_params(actor_model) if directml_fp16 else None
+    critic_master_params = create_fp32_master_params(critic_model) if directml_fp16 else None
     actor_optimizer = optim.AdamW(
-        actor_model.parameters(),
+        actor_master_params if actor_master_params is not None else actor_model.parameters(),
         lr=args.learning_rate,
-        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+        eps=1e-8 if actor_master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
     )
     critic_optimizer = optim.AdamW(
-        critic_model.parameters(),
+        critic_master_params if critic_master_params is not None else critic_model.parameters(),
         lr=args.critic_learning_rate,
-        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+        eps=1e-8 if critic_master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
     )
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler)
     iters = len(loader_for_count)
@@ -480,14 +491,25 @@ if __name__ == "__main__":
     if ckp_data:
         actor_model.load_state_dict(ckp_data['model'])
         critic_model.load_state_dict(ckp_data['critic_model'])
+        if actor_master_params is not None:
+            if 'master_weights' not in ckp_data or 'critic_master_weights' not in ckp_data:
+                raise RuntimeError(
+                    "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
+                    "Start a new run with --from_resume 0."
+                )
+            load_fp32_master_weights(actor_master_params, ckp_data['master_weights'])
+            load_fp32_master_weights(critic_master_params, ckp_data['critic_master_weights'])
+            sync_master_to_model(actor_model, actor_master_params)
+            sync_master_to_model(critic_model, critic_master_params)
         actor_optimizer.load_state_dict(ckp_data['optimizer'])
         critic_optimizer.load_state_dict(ckp_data['critic_optimizer'])
-        configure_optimizer_for_directml_fp16(
-            actor_optimizer, args.device, args.dtype, args.directml_adam_eps
-        )
-        configure_optimizer_for_directml_fp16(
-            critic_optimizer, args.device, args.dtype, args.directml_adam_eps
-        )
+        if actor_master_params is None:
+            configure_optimizer_for_directml_fp16(
+                actor_optimizer, args.device, args.dtype, args.directml_adam_eps
+            )
+            configure_optimizer_for_directml_fp16(
+                critic_optimizer, args.device, args.dtype, args.directml_adam_eps
+            )
         if ckp_data.get('scaler') is not None:
             scaler.load_state_dict(ckp_data['scaler'])
         actor_scheduler.load_state_dict(ckp_data['scheduler'])

@@ -276,6 +276,14 @@ Finalization**.
 
 # M5 --- Project Finalization
 
+-   Diagnosed a long-run Dense pretraining collapse in which the
+    previous pure-FP16 optimizer path remained finite but converged
+    toward token self-copying.
+-   Added FP32 master weights for Dense DirectML FP16 pretraining and
+    validated the corrected path through global step `1100` with mean
+    diagnostic loss `6.7506`, Top-1 accuracy `6.30%`, and repeat rate
+    `0.89%`.
+
 -   Added trainer-specific batch-size, sequence-length, and accumulation
     settings to the sequential training workflow, while keeping the M4
     `8 × 340` configuration documented as the sustained DirectML

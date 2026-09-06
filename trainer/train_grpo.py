@@ -22,7 +22,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoModel
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -156,7 +156,8 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
             scaler,
             args.device,
             args.dtype,
-            args.directml_loss_scale
+            args.directml_loss_scale,
+            master_params=master_params
         )
 
         if step % args.accumulation_steps == 0:
@@ -167,7 +168,8 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
                 args.grad_clip if args.grad_clip > 0 else float("inf"),
                 args.device,
                 args.dtype,
-                args.directml_loss_scale
+                args.directml_loss_scale,
+                master_params=master_params
             )
             scheduler.step()
 
@@ -205,8 +207,12 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
             torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler, scaler=scaler)
+            checkpoint_kwargs = {}
+            if master_params is not None:
+                checkpoint_kwargs['master_weights'] = export_fp32_master_weights(master_params)
+            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler, scaler=scaler,
+                         **checkpoint_kwargs)
             model.train()
             del state_dict
 
@@ -227,7 +233,8 @@ def grpo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_mod
             args.grad_clip if args.grad_clip > 0 else float("inf"),
             args.device,
             args.dtype,
-            args.directml_loss_scale
+            args.directml_loss_scale,
+            master_params=master_params
         )
         scheduler.step()
 
@@ -328,10 +335,11 @@ if __name__ == "__main__":
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=lm_config.max_seq_len, thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = create_grad_scaler(args.device, args.dtype)
+    master_params = create_fp32_master_params(model) if directml_fp16 else None
     optimizer = optim.AdamW(
-        model.parameters(),
+        master_params if master_params is not None else model.parameters(),
         lr=args.learning_rate,
-        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
+        eps=1e-8 if master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
     )
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler)
     iters = len(loader_for_count)
@@ -342,10 +350,19 @@ if __name__ == "__main__":
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
+        if master_params is not None:
+            if 'master_weights' not in ckp_data:
+                raise RuntimeError(
+                    "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
+                    "Start a new run with --from_resume 0."
+                )
+            load_fp32_master_weights(master_params, ckp_data['master_weights'])
+            sync_master_to_model(model, master_params)
         optimizer.load_state_dict(ckp_data['optimizer'])
-        configure_optimizer_for_directml_fp16(
-            optimizer, args.device, args.dtype, args.directml_adam_eps
-        )
+        if master_params is None:
+            configure_optimizer_for_directml_fp16(
+                optimizer, args.device, args.dtype, args.directml_adam_eps
+            )
         if ckp_data.get('scaler') is not None:
             scaler.load_state_dict(ckp_data['scaler'])
         scheduler.load_state_dict(ckp_data['scheduler'])

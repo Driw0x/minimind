@@ -646,3 +646,59 @@ completed successfully with:
 ``` text
 Passed: 9/9
 ```
+
+------------------------------------------------------------------------
+
+# Long-Run DirectML FP16 Pretraining Collapse
+
+## Problem
+
+A full Dense pretraining run remained finite but later produced a
+degenerate self-copying model.
+
+Teacher-forced diagnostics showed approximately:
+
+``` text
+Mean loss:           13.57
+Top-1 accuracy:      0.18%
+Top-1 repeat rate:  93.48%
+```
+
+An untrained model did not show this behavior.
+
+## Cause
+
+The DirectML FP16 path updated FP16 model parameters directly with
+AdamW. Static loss scaling protected gradients but did not provide the
+FP32 master weights used by conventional mixed-precision optimization.
+
+## Solution
+
+Dense DirectML pretraining now uses:
+
+``` text
+FP16 model compute
+        ↓
+FP32 gradient unscale
+        ↓
+AdamW on FP32 master weights
+        ↓
+FP32 master weights copied back to FP16 model
+```
+
+The FP32 optimizer path uses AdamW epsilon `1e-8`.
+
+A 100-step validation improved mean diagnostic loss from `8.89` for an
+untrained model to `7.48`. After resuming to global step `1100`, mean
+loss reached `6.75`, Top-1 accuracy reached `6.30%`, and Top-1 repeat
+rate remained low at `0.89%`.
+
+## Decision
+
+Finite loss alone is not sufficient to validate DirectML FP16
+pretraining.
+
+Dense pretraining uses FP32 master weights for optimizer updates, and
+teacher-forced checkpoint diagnostics are retained to detect silent
+training collapse.
+
