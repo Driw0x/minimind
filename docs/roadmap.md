@@ -130,6 +130,8 @@ viability investigation.
 -   [ ] Validate the project from a fresh clone
 -   [ ] Publish a reproducible DirectML-ready configuration
 -   [x] Document periodic checkpoint and resume workflow
+-   [x] Correct DirectML cross-entropy normalization with ignored padding
+-   [x] Validate FP16 + FP32-master pretraining at 100 and 1000 steps
 
 ### If DirectML training remains impractical
 

@@ -203,6 +203,22 @@ together with `benchmark_training.py`: the trainer validates the actual
 training workflow, while the benchmark provides more focused throughput
 measurements.
 
+## DirectML Loss Validation Tests
+
+Targeted regression utilities for the DirectML cross-entropy
+investigation are stored in `tests/`:
+
+``` text
+test_directml_cross_entropy.py
+test_batch_loss_consistency.py
+test_train_diagnostic_loss.py
+```
+
+They validate the DirectML `cross_entropy` reduction behavior and
+compare training-path loss with token-normalized diagnostic loss. These
+tests are kept separate from `scripts/`, while
+`scripts/diagnose_pretrain.py` remains the checkpoint-analysis utility.
+
 ------------------------------------------------------------------------
 
 ## Trainer Smoke Test Runner

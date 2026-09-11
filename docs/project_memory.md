@@ -704,10 +704,15 @@ AdamW FP32 update
 Copy master weights back to FP16 model
 ```
 
-The corrected path was validated through global step `1100`. Mean
-teacher-forced loss improved from `8.8931` for an untrained model to
-`6.7506`, Top-1 accuracy reached `6.30%`, and Top-1 repeat rate remained
-low at `0.89%`.
+A later DirectML cross-entropy investigation showed that the default
+mean reduction with `ignore_index=-100` incorrectly normalized padded
+batches. Loss normalization is now performed explicitly over valid
+tokens.
+
+A fresh run combining FP16 compute, FP32 master weights, and corrected
+loss normalization reached train-path loss `7.3925` at step `100` and
+`6.7785` at step `1000`. Top-1 accuracy reached `6.76%` and Top-1 repeat
+rate remained low at `0.76%`.
 
 ### Decision
 
@@ -718,4 +723,8 @@ Dense DirectML pretraining keeps FP32 master weights in resume
 checkpoints so optimizer precision is preserved across interruptions.
 Old resume checkpoints without master weights must not be used with the
 new path.
+
+DirectML causal-LM loss must also be normalized explicitly over valid
+non-padding tokens rather than relying on the backend's default
+cross-entropy mean reduction.
 

@@ -845,27 +845,36 @@ not included in this specific 9-test runner.
 
 ------------------------------------------------------------------------
 
-# FP32 Master-Weight Pretraining Validation
+# FP32 Master-Weight and Loss-Normalization Validation
 
 A later checkpoint-quality investigation showed that the earlier
-pure-FP16 DirectML optimizer path could remain finite while converging to
-a degenerate self-copying model.
+pure-FP16 DirectML optimizer path could remain finite while converging
+to a degenerate self-copying model.
 
 Dense pretraining was therefore changed to use FP16 compute with FP32
 master weights and FP32 AdamW updates.
 
-Teacher-forced diagnostics on the same 32 samples produced:
+A second investigation showed that DirectML
+`F.cross_entropy(..., ignore_index=-100, reduction="mean")` normalized
+the loss over all positions instead of valid non-ignored tokens. The
+model loss now uses `reduction="sum"` divided explicitly by the number
+of valid tokens.
 
-| Checkpoint | Mean loss | Top-1 accuracy | Top-1 repeat | Mean entropy |
-| --- | ---: | ---: | ---: | ---: |
-| Untrained | 8.8931 | 0.03% | 0.13% | 8.6103 |
-| Previous full pretrain | 13.5668 | 0.18% | 93.48% | 1.2536 |
-| FP32 master, step 100 | 7.4799 | 3.27% | 3.27% | 7.2063 |
-| FP32 master, step 1100 | 6.7506 | 6.30% | 0.89% | 6.3445 |
+A fresh corrected pretraining run produced:
 
-The new path therefore remains finite while also improving next-token
-prediction quality instead of collapsing toward token repetition.
+  ------------------------------------------------------------------------
+  Checkpoint       Train-path Top-1 accuracy   Top-1 repeat   Mean entropy
+                         loss                               
+  ------------ -------------- -------------- -------------- --------------
+  Step 100             7.3925          3.26%          3.26%         7.2241
 
-This validation supersedes finite-loss-only validation for Dense
-DirectML pretraining.
+  Step 1000            6.7785          6.76%          0.76%         6.1648
+  ------------------------------------------------------------------------
+
+The corrected path therefore remains finite, improves next-token
+prediction quality, and avoids the previous self-copying collapse.
+
+This validation supersedes finite-loss-only validation and earlier
+diagnostics obtained before the DirectML cross-entropy normalization
+issue was corrected.
 

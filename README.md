@@ -59,9 +59,13 @@ self-copying collapse in the earlier pure-FP16 optimizer path. Dense
 pretraining now uses static loss scale `1024`, FP32 master weights, and
 FP32 AdamW updates with `eps = 1e-8`.
 
-The corrected path was validated through global step `1100`: mean
-teacher-forced loss reached `6.7506`, Top-1 accuracy `6.30%`, and
-Top-1 repeat rate remained low at `0.89%`.
+A second DirectML issue was identified in cross-entropy mean reduction
+with ignored padding tokens. Loss normalization is now performed
+explicitly over valid tokens.
+
+A fresh corrected run was validated through step `1000`: train-path loss
+reached `6.7785`, Top-1 accuracy `6.76%`, and Top-1 repeat rate remained
+low at `0.76%`.
 
 The final consolidated DirectML trainer smoke suite also completed
 successfully:
@@ -307,6 +311,7 @@ Changes include:
 -   DirectML compatibility and real-training benchmarking;
 -   DirectML FP16 Dense pretraining with static loss scaling and FP32
     master-weight optimizer updates;
+-   explicit valid-token cross-entropy normalization for DirectML;
 -   bounded `--max_steps` validation across the main trainable
     workflows;
 -   explicit cross-trainer DirectML smoke validation;

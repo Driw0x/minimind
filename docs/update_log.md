@@ -290,4 +290,14 @@ Finalization**.
     pretraining baseline.
 -   Added automatic resume checkpoint refresh every 100 iterations and
     documented interrupted-training recovery with `--from_resume 1`.
-
+-   Identified incorrect DirectML mean reduction for
+    `cross_entropy(..., ignore_index=-100)` on padded causal-LM batches.
+-   Replaced implicit mean reduction with explicit valid-token loss
+    normalization.
+-   Moved the targeted DirectML loss-validation utilities from
+    `scripts/` to `tests/`.
+-   Validated a fresh corrected FP16 + FP32-master pretraining run at
+    step `100` with loss `7.3925`, Top-1 accuracy `3.26%`, and repeat
+    rate `3.26%`.
+-   Validated the same run at step `1000` with loss `6.7785`, Top-1
+    accuracy `6.76%`, and repeat rate `0.76%`.

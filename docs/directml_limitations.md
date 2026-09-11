@@ -32,6 +32,9 @@ Performance measurements are documented in
 
   Agent full-sequence attention   Partial       Avoid problematic mask for
   mask in FP16                                  right-padded recomputation
+
+  Cross-entropy `ignore_index`     Partial       Explicit valid-token
+  mean reduction                                 normalization
   ---------------------------------------------------------------------------
 
 ------------------------------------------------------------------------
@@ -214,6 +217,18 @@ The validated Agent batches use right padding. The DirectML Agent path
 therefore avoids this problematic mask during policy/reference
 recomputation while retaining the response mask used by the training
 objective.
+
+# Cross-Entropy Mean Reduction
+
+On the tested DirectML backend,
+`F.cross_entropy(..., ignore_index=-100, reduction="mean")` does not
+normalize padded causal-LM batches over valid tokens as expected.
+
+MiniMind therefore computes the summed cross-entropy and divides
+explicitly by the number of non-ignored target tokens.
+
+This workaround preserves correct token-level loss normalization during
+DirectML training.
 
 ------------------------------------------------------------------------
 

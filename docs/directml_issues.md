@@ -702,3 +702,43 @@ Dense pretraining uses FP32 master weights for optimizer updates, and
 teacher-forced checkpoint diagnostics are retained to detect silent
 training collapse.
 
+------------------------------------------------------------------------
+
+# DirectML Cross-Entropy `ignore_index` Mean Normalization
+
+## Problem
+
+On DirectML, `F.cross_entropy(..., ignore_index=-100)` with the default
+`reduction="mean"` produced a loss smaller than the true
+token-normalized cross-entropy when padding was present.
+
+## Cause
+
+Targeted CPU/DirectML tests showed that the tested DirectML path divided
+the summed loss by all positions instead of only valid non-ignored
+tokens.
+
+This made gradient magnitude depend on padding density.
+
+## Solution
+
+Causal LM loss now uses:
+
+``` python
+loss = F.cross_entropy(x, y, ignore_index=-100, reduction="sum")
+loss = loss / (y != -100).sum().clamp_min(1)
+```
+
+A fresh FP16 + FP32-master pretraining run reached:
+
+``` text
+Step 100:  loss 7.3925, Top-1 3.26%, repeat 3.26%
+Step 1000: loss 6.7785, Top-1 6.76%, repeat 0.76%
+```
+
+## Decision
+
+DirectML training must not rely on the default mean reduction for
+cross-entropy with ignored padding tokens.
+
+Loss normalization is performed explicitly over valid tokens.
