@@ -59,7 +59,7 @@ def main():
     start_index = args.sample_index
     end_index = min(start_index + args.num_samples, len(dataset))
 
-    total_loss = 0.0
+    total_train_loss = 0.0
     total_tokens = 0
     total_correct = 0
     total_repeat = 0
@@ -83,29 +83,38 @@ def main():
         input_ids, labels = dataset[index]
 
         input_ids = input_ids.unsqueeze(0).to(device)
+        labels_device = labels.unsqueeze(0).to(device)
 
-        with torch.no_grad():
-            outputs = model(input_ids)
-
-        logits = outputs.logits[0, :-1].detach().float().cpu()
         targets = labels[1:].cpu()
         previous_tokens = input_ids[0, :-1].detach().cpu()
-
         mask = targets != -100
 
-        logits = logits[mask]
         targets = targets[mask]
         previous_tokens = previous_tokens[mask]
 
         if targets.numel() == 0:
             continue
 
+        token_count = targets.numel()
+
+        with torch.no_grad():
+            train_outputs = model(
+                input_ids=input_ids,
+                labels=labels_device
+            )
+
+            diagnostic_outputs = model(
+                input_ids=input_ids
+            )
+
+        train_loss = train_outputs.loss.detach().float().item()
+
+        logits = diagnostic_outputs.logits[0, :-1].detach().float().cpu()
+        logits = logits[mask]
+
         log_probs = F.log_softmax(logits, dim=-1)
         probs = log_probs.exp()
         predictions = logits.argmax(dim=-1)
-
-        token_count = targets.numel()
-        sample_loss_sum = F.nll_loss(log_probs, targets, reduction="sum").item()
 
         correct_mask = predictions == targets
         repeat_mask = predictions == previous_tokens
@@ -118,7 +127,7 @@ def main():
         sample_repeat_only = (repeat_mask & ~correct_mask).sum().item()
         sample_entropy = -(probs * log_probs).sum(dim=-1).sum().item()
 
-        total_loss += sample_loss_sum
+        total_train_loss += train_loss * token_count
         total_tokens += token_count
         total_correct += sample_correct
         total_repeat += sample_repeat
@@ -131,7 +140,7 @@ def main():
         print(
             f"[{index}] "
             f"tokens={token_count} "
-            f"loss={sample_loss_sum / token_count:.4f} "
+            f"train_loss={train_loss:.4f} "
             f"top1={sample_correct / token_count:.2%} "
             f"repeat={sample_repeat / token_count:.2%} "
             f"true_repeat={sample_true_repeat / token_count:.2%} "
@@ -143,8 +152,8 @@ def main():
     if total_tokens == 0:
         raise RuntimeError("No valid tokens found.")
 
-    mean_loss = total_loss / total_tokens
-    perplexity = math.exp(min(mean_loss, 20))
+    mean_train_loss = total_train_loss / total_tokens
+    perplexity = math.exp(min(mean_train_loss, 20))
     top1_accuracy = total_correct / total_tokens
     repeat_rate = total_repeat / total_tokens
     true_repeat_rate = total_true_repeat / total_tokens
@@ -157,8 +166,8 @@ def main():
     print(" Aggregate results")
     print("============================================================")
     print(f"Valid tokens: {total_tokens}")
-    print(f"Mean loss: {mean_loss:.4f}")
-    print(f"Perplexity: {perplexity:.2f}")
+    print(f"Train-path mean loss: {mean_train_loss:.4f}")
+    print(f"Train-path perplexity: {perplexity:.2f}")
     print(f"Top-1 accuracy: {top1_accuracy:.2%}")
     print(f"Top-1 repeat rate: {repeat_rate:.2%}")
     print(f"True-data repeat rate: {true_repeat_rate:.2%}")

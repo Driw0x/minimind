@@ -346,10 +346,16 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
+        # loss = None
+        # if labels is not None:
+        #     x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
+        #     loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
         loss = None
         if labels is not None:
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
-            loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
+            x, y = x.view(-1, x.size(-1)), y.view(-1)
+            loss = F.cross_entropy(x, y, ignore_index=-100, reduction="sum")
+            loss = loss / (y != -100).sum().clamp_min(1)
         return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
     
     # https://github.com/jingyaogong/minimind/discussions/611
