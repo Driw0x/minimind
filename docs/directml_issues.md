@@ -742,3 +742,47 @@ DirectML training must not rely on the default mean reduction for
 cross-entropy with ignored padding tokens.
 
 Loss normalization is performed explicitly over valid tokens.
+
+
+------------------------------------------------------------------------
+
+# Pretraining Diagnostic Loss Aggregation Mismatch
+
+## Problem
+
+After the first complete corrected Dense pretraining epoch,
+`diagnose_pretrain.py` reported aggregate train-path losses around
+`12–13`, despite improving Top-1 accuracy and a low repeat rate.
+
+## Cause
+
+The reported aggregate value came from the diagnostic calculation path
+rather than the actual training loss. A dedicated comparison using the
+same checkpoint and batch showed that the model loss and an independent
+manual valid-token cross-entropy match exactly.
+
+## Solution
+
+The diagnostic is being aligned with the real batched training path and
+token-weighted aggregation.
+
+Reference validation:
+
+``` text
+Model loss:   6.48799419
+Manual loss:  6.48799419
+Difference:   0.0000000000
+MATCH
+```
+
+Across samples `0–255`, the independently validated token-weighted
+global loss is `6.1017`.
+
+## Decision
+
+Checkpoint quality must not be judged from an aggregate diagnostic loss
+unless that diagnostic has been validated against the model training
+loss.
+
+The train-vs-manual loss consistency test is retained as the reference
+check for loss correctness.

@@ -728,3 +728,47 @@ DirectML causal-LM loss must also be normalized explicitly over valid
 non-padding tokens rather than relying on the backend's default
 cross-entropy mean reduction.
 
+
+
+------------------------------------------------------------------------
+
+## Corrected Dense Pretraining Completed Epoch 1
+
+The final corrected Dense DirectML path was restarted from scratch using
+the upstream pretraining parameters, including physical
+`batch_size = 32`, while retaining the required DirectML FP16
+adaptations.
+
+The first complete epoch finished successfully.
+
+A checkpoint consistency test on the epoch-1 model confirmed:
+
+``` text
+Model loss:                  6.48799419
+Manual token loss:           6.48799419
+Difference:                  0.0000000000
+Samples 0–255 global loss:   6.1017
+Top-1 accuracy:              15.07%
+Top-1 repeat rate:            0.83%
+Mean entropy:                 5.3160
+```
+
+Compared with the corrected step-1000 checkpoint (`loss 6.7785`,
+Top-1 `6.76%`, repeat `0.76%`), the first full epoch shows substantial
+next-token accuracy improvement without a return of the historical
+self-copying collapse.
+
+Earlier aggregate losses around `12–13` from `diagnose_pretrain.py`
+were identified as a diagnostic aggregation problem. The model training
+loss itself matches independent manual cross-entropy exactly.
+
+### Decision
+
+The current corrected training path, rather than the earlier M4
+pure-FP16 benchmark path, is the reference for final Dense pretraining
+quality.
+
+The successful full epoch also demonstrates that `batch_size = 32` is
+viable with the current corrected implementation on the reference
+hardware; older OOM observations remain historical results from an
+earlier training path.

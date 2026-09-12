@@ -878,3 +878,69 @@ This validation supersedes finite-loss-only validation and earlier
 diagnostics obtained before the DirectML cross-entropy normalization
 issue was corrected.
 
+
+
+------------------------------------------------------------------------
+
+# Corrected Full-Epoch Dense Pretraining Validation
+
+After the FP32 master-weight and valid-token cross-entropy corrections,
+Dense pretraining was restarted from scratch using the upstream
+pretraining parameters, with only the DirectML precision/backend path
+adapted:
+
+``` text
+Device:                 directml:1
+Model dtype:            float16
+Epochs:                 2
+Batch size:             32
+Learning rate:          5e-4
+Max sequence length:    340
+Gradient accumulation:  8
+Hidden size:            768
+Hidden layers:          8
+Dense / use_moe:        0
+```
+
+The first complete epoch finished successfully.
+
+This is important because the earlier `32 × 340 → OOM` observation was
+obtained before the final DirectML training path was established. It is
+retained above as historical benchmark evidence, but it no longer
+describes the current corrected implementation.
+
+Checkpoint validation on samples `0–255` produced:
+
+``` text
+Valid tokens:                 51,596
+Mean batch loss:              6.0922
+Token-weighted global loss:   6.1017
+Minimum batch loss:           5.6996
+Maximum batch loss:           6.4880
+Top-1 accuracy:               15.07%
+Top-1 repeat rate:             0.83%
+Mean entropy:                  5.3160
+```
+
+A direct comparison between the model training loss and an independent
+manual token-normalized cross-entropy on the same batch produced:
+
+``` text
+Model loss:   6.48799419
+Manual loss:  6.48799419
+Difference:   0.0000000000
+MATCH
+```
+
+The corrected epoch-1 checkpoint therefore shows continued learning
+relative to the corrected step-1000 checkpoint (`loss 6.7785`,
+Top-1 `6.76%`) while keeping the repeat rate low.
+
+The earlier aggregate loss values around `12–13` reported by
+`diagnose_pretrain.py` were traced to the diagnostic aggregation path,
+not to the model or training loss. The dedicated train-vs-manual loss
+test confirmed that the checkpoint loss is correctly normalized.
+
+This full-epoch result supersedes the earlier assumption that physical
+`batch_size = 32` is necessarily unsustainable for the current corrected
+Dense DirectML pretraining path on the reference hardware.

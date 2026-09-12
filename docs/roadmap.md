@@ -122,7 +122,7 @@ viability investigation.
 
 ### If DirectML training is practically viable
 
--   [ ] Apply identified performance optimizations
+-   [x] Apply identified performance optimizations
 -   [ ] Finalize installation documentation
 -   [x] Document supported training workflows
 -   [ ] Add troubleshooting documentation
@@ -131,7 +131,7 @@ viability investigation.
 -   [ ] Publish a reproducible DirectML-ready configuration
 -   [x] Document periodic checkpoint and resume workflow
 -   [x] Correct DirectML cross-entropy normalization with ignored padding
--   [x] Validate FP16 + FP32-master pretraining at 100 and 1000 steps
+-   [x] Validate FP16 + FP32-master pretraining through a full epoch
 
 ### If DirectML training remains impractical
 

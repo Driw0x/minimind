@@ -301,3 +301,20 @@ Finalization**.
     rate `3.26%`.
 -   Validated the same run at step `1000` with loss `6.7785`, Top-1
     accuracy `6.76%`, and repeat rate `0.76%`.
+
+-   Restarted Dense pretraining from scratch with the corrected FP16
+    compute + FP32 master-weight + valid-token loss path and upstream
+    pretraining parameters.
+-   Completed the first full Dense pretraining epoch successfully with
+    physical `batch_size = 32`.
+-   Validated the epoch-1 checkpoint on samples `0–255` with
+    token-weighted global loss `6.1017`, Top-1 accuracy `15.07%`,
+    Top-1 repeat rate `0.83%`, and mean entropy `5.3160`.
+-   Confirmed exact agreement between model loss and independent manual
+    token-normalized cross-entropy (`6.48799419`, difference `0` on the
+    reference batch).
+-   Identified the previously reported aggregate diagnostic loss around
+    `12–13` as a `diagnose_pretrain.py` aggregation issue rather than a
+    training divergence.
+-   Began correcting `diagnose_pretrain.py` to use the real batched
+    training-loss path and token-weighted aggregation.

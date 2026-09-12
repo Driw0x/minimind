@@ -35,50 +35,38 @@ The main goals are:
 
 MiniMind training and inference are functional on Windows with DirectML.
 
-The main training pipeline has been validated with DirectML, including:
+**M1–M4 are complete. M5 — Project Finalization is currently in
+progress.**
 
--   pretraining;
--   supervised fine-tuning (SFT);
--   LoRA;
--   DPO;
--   GRPO;
--   PPO;
--   Agent RL;
--   knowledge distillation;
--   checkpoint compatibility between training stages.
+The DirectML adaptation supports the main MiniMind training pipeline,
+including pretraining, SFT, LoRA, DPO, GRPO, PPO, Agent RL, knowledge
+distillation, and Dense/MoE workflows.
 
-Some operations still require CPU fallback or have limited DirectML
-support.
+During M5, long-run validation identified two silent training-quality
+issues specific to the tested DirectML path:
 
-**M4 --- Performance & Stability is complete.** The DirectML reference
-on `directml:1` uses `batch_size = 8`, `max_seq_len = 340`, gradient
-accumulation `8`, and FP16 compute.
+- direct FP16 AdamW updates could remain finite while converging toward
+  a degenerate self-copying model;
+- DirectML cross-entropy mean reduction with ignored padding tokens did
+  not normalize over valid tokens as expected.
 
-During M5, long-run checkpoint diagnostics identified a silent
-self-copying collapse in the earlier pure-FP16 optimizer path. Dense
-pretraining now uses static loss scale `1024`, FP32 master weights, and
-FP32 AdamW updates with `eps = 1e-8`.
+Dense DirectML pretraining now uses FP16 compute with FP32 master
+weights and explicit valid-token cross-entropy normalization.
 
-A second DirectML issue was identified in cross-entropy mean reduction
-with ignored padding tokens. Loss normalization is now performed
-explicitly over valid tokens.
+A fresh corrected pretraining run has completed its first full epoch
+using the upstream physical batch size of 32.
 
-A fresh corrected run was validated through step `1000`: train-path loss
-reached `6.7785`, Top-1 accuracy `6.76%`, and Top-1 repeat rate remained
-low at `0.76%`.
+Checkpoint validation reached:
 
-The final consolidated DirectML trainer smoke suite also completed
-successfully:
+- token-weighted loss: `6.1017`;
+- Top-1 accuracy: `15.07%`;
+- Top-1 repeat rate: `0.83%`.
 
-``` text
-All trainer smoke tests passed
-Passed: 9/9
-```
+Model loss and independently computed token-normalized cross-entropy
+match exactly on the reference consistency test.
 
-The final runner includes Dense and MoE Pretrain / Full SFT, LoRA,
-Distillation, GRPO, Agent RL, and PPO.
-
-The project is now in **M5 --- Project Finalization**.
+The project is now completing the remaining M5 full-training and
+final validation work.
 
 See the [project roadmap](docs/roadmap.md) for the complete development
 plan.
