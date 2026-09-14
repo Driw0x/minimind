@@ -318,3 +318,31 @@ Finalization**.
     training divergence.
 -   Began correcting `diagnose_pretrain.py` to use the real batched
     training-loss path and token-weighted aggregation.
+
+-   Re-tested the DirectML causal-LM loss with identical logits using
+    `sum / valid`, per-token `none → FP32 mean`, and CPU FP32 reference
+    reductions.
+-   Confirmed that the initial `reduction="sum" / valid_tokens`
+    workaround is also incorrect on the tested DirectML FP16 path.
+-   Replaced it with `reduction="none"` followed by FP32 averaging over
+    valid non-padding tokens.
+-   Validated the final batch-32 loss path with model loss `6.30274916`
+    versus CPU FP32 reference `6.30530691` (difference approximately
+    `0.00256`).
+-   Reclassified the completed two-epoch / earlier full-epoch
+    pretraining checkpoints as intermediate investigation artifacts
+    because their backward pass used the superseded `sum / valid`
+    reduction.
+-   Final Dense pretraining must restart from scratch with FP32 master
+    weights and the final per-token FP32-valid-mean cross-entropy path.
+-   Validated the final DirectML FP16 + FP32-master + per-token
+    cross-entropy path through step `1200`.
+-   Training-path and manual token losses remained within approximately
+    `0.003` across two independent 256-sample evaluation regions.
+-   At step `1200`, train-path loss reached `6.3752` and `6.3568`,
+    Top-1 accuracy reached `8.66%` and `8.91%`, and Top-1 repeat rate
+    remained limited to `1.96%` and `2.08%`.
+-   Confirmed no recurrence of the historical self-copying collapse;
+    final full-epoch validation with the retained loss path remains
+    pending.
+

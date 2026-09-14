@@ -704,45 +704,91 @@ training collapse.
 
 ------------------------------------------------------------------------
 
-# DirectML Cross-Entropy `ignore_index` Mean Normalization
+# DirectML Cross-Entropy Reduction and Valid-Token Normalization
 
 ## Problem
 
-On DirectML, `F.cross_entropy(..., ignore_index=-100)` with the default
-`reduction="mean"` produced a loss smaller than the true
-token-normalized cross-entropy when padding was present.
+On the tested DirectML FP16 path, causal-LM cross-entropy with
+`ignore_index=-100` did not reproduce the expected valid-token
+normalization.
 
-## Cause
+The default `reduction="mean"` divided the effective loss by all shifted
+positions instead of only valid non-ignored tokens.
 
-Targeted CPU/DirectML tests showed that the tested DirectML path divided
-the summed loss by all positions instead of only valid non-ignored
-tokens.
-
-This made gradient magnitude depend on padding density.
-
-## Solution
-
-Causal LM loss now uses:
+An initial workaround using:
 
 ``` python
 loss = F.cross_entropy(x, y, ignore_index=-100, reduction="sum")
 loss = loss / (y != -100).sum().clamp_min(1)
 ```
 
-A fresh FP16 + FP32-master pretraining run reached:
+was later found to be incorrect as well on the tested DirectML FP16
+path.
+
+## Cause
+
+Targeted CPU/DirectML tests first confirmed the incorrect denominator of
+the DirectML mean reduction when ignored padding tokens were present.
+
+A second reduction comparison then evaluated the same model logits with:
 
 ``` text
-Step 100:  loss 7.3925, Top-1 3.26%, repeat 3.26%
-Step 1000: loss 6.7785, Top-1 6.76%, repeat 0.76%
+A = DirectML reduction="sum" / valid tokens
+B = DirectML reduction="none" → valid tokens → FP32 mean
+C = CPU FP32 reference
+```
+
+The results were:
+
+``` text
+Batch 8:
+A = 14.1078
+B =  6.6688
+C =  6.6715
+
+Batch 32:
+A = 10.7772
+B =  6.3027
+C =  6.3053
+```
+
+`B` matched the CPU FP32 reference within approximately `0.003`, while
+`A` did not.
+
+## Solution
+
+The final DirectML causal-LM loss uses per-token cross-entropy followed
+by FP32 averaging over valid tokens:
+
+``` python
+token_loss = F.cross_entropy(
+    x,
+    y,
+    ignore_index=-100,
+    reduction="none",
+)
+
+valid = y != -100
+loss = token_loss[valid].float().mean()
+```
+
+After applying the change, the model training loss on the batch-32
+reference test became:
+
+``` text
+Model outputs.loss:             6.30274916
+DirectML none → FP32 mean:      6.30274916
+CPU FP32 reference:             6.30530691
+|model - CPU|:                  0.0025577545
 ```
 
 ## Decision
 
-DirectML training must not rely on the default mean reduction for
-cross-entropy with ignored padding tokens.
+DirectML causal-LM training must not rely on either the backend default
+mean reduction or the tested FP16 `sum / valid_tokens` workaround.
 
-Loss normalization is performed explicitly over valid tokens.
-
+The retained implementation computes per-token losses with
+`reduction="none"` and performs the valid-token mean in FP32.
 
 ------------------------------------------------------------------------
 
@@ -756,33 +802,33 @@ After the first complete corrected Dense pretraining epoch,
 
 ## Cause
 
-The reported aggregate value came from the diagnostic calculation path
-rather than the actual training loss. A dedicated comparison using the
-same checkpoint and batch showed that the model loss and an independent
-manual valid-token cross-entropy match exactly.
+The investigation initially suggested a diagnostic aggregation problem,
+but the dedicated reduction test later showed that the current
+`reduction="sum" / valid_tokens` training path itself was incorrect on
+the tested DirectML FP16 backend.
+
+The diagnostic's manual token loss remained useful because it was close
+to the independent CPU FP32 reference.
 
 ## Solution
 
-The diagnostic is being aligned with the real batched training path and
-token-weighted aggregation.
+The diagnostic was changed to use batched evaluation, and the model loss
+implementation was replaced with per-token DirectML cross-entropy
+followed by FP32 valid-token averaging.
 
-Reference validation:
+The decisive batch-32 validation produced:
 
 ``` text
-Model loss:   6.48799419
-Manual loss:  6.48799419
-Difference:   0.0000000000
-MATCH
+Model outputs.loss:        6.30274916
+Manual DirectML loss:      6.30274916
+CPU FP32 reference:        6.30530691
+Difference vs CPU:         0.0025577545
 ```
-
-Across samples `0–255`, the independently validated token-weighted
-global loss is `6.1017`.
 
 ## Decision
 
-Checkpoint quality must not be judged from an aggregate diagnostic loss
-unless that diagnostic has been validated against the model training
-loss.
+Checkpoint diagnostics must compare the model training path with an
+independent reference on the same logits.
 
-The train-vs-manual loss consistency test is retained as the reference
-check for loss correctness.
+The `reduction="none"` → FP32 valid-token mean implementation is the
+retained DirectML loss path.

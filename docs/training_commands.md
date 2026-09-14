@@ -26,12 +26,18 @@ The DirectML-specific numerical settings remain:
 ``` text
 Device: directml:1
 DType: float16
-Hidden size: 768
-Layers: 8
 DirectML static loss scale: 1024
-Checkpoint interval: 100 iterations
 torch.compile: disabled
 ```
+
+For DirectML FP16 training, the project additionally uses:
+
+- FP32 master weights for optimizer updates;
+- per-token cross-entropy (`reduction="none"`) followed by FP32
+  valid-token averaging.
+
+These adaptations avoid the FP16 optimizer instability and incorrect
+DirectML cross-entropy reductions identified during long-run validation.
 
 Dense Pretrain additionally uses FP32 master weights with AdamW
 `eps = 1e-8`. Other trainer-specific precision paths remain unchanged
@@ -77,6 +83,11 @@ evaluates all experts:
 
 These MoE values are a DirectML safety override, not upstream defaults.
 
+Current upstream Pretrain and Full SFT expose `--seed 42`. The
+current DirectML fork used in this project may not expose that CLI option
+yet, so the commands below do not force `--seed`; keep the fork's current
+seed behavior until the local argparse is synchronized.
+
 Run individual trainer commands from:
 
 ``` powershell
@@ -92,14 +103,12 @@ with:
 
 ## Checkpoint behavior
 
-Every training command below includes:
+Each command below uses the current upstream `save_interval` default
+for that trainer unless a short DirectML validation run intentionally
+overrides it.
 
-``` text
---save_interval 100
-```
-
-The trainer therefore writes a resume checkpoint every 100 training
-iterations and at the normal end of an epoch.
+The trainer writes a resume checkpoint at the configured interval and
+at the normal end of an epoch.
 
 Two kinds of files are produced:
 
@@ -127,10 +136,9 @@ optimizer/scheduler states.
 
 The current checkpoint implementation keeps the **latest checkpoint**
 for each training stage. A new save replaces the previous checkpoint for
-the same weight name. Therefore, `--save_interval 100` gives a recovery
-point at most approximately 100 iterations behind an unexpected
-interruption; it does not create a permanent archive of every 100-step
-checkpoint.
+the same weight name. Therefore, the recovery distance is bounded approximately by the
+configured `save_interval`; the current implementation does not create
+a permanent archive of every checkpoint.
 
 ## Resume an interrupted training
 
@@ -171,14 +179,19 @@ Full training:
 python train_pretrain.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 2 `
+  --batch_size 32 `
+  --learning_rate 5e-4 `
+  --num_workers 8 `
+  --accumulation_steps 8 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 8 `
   --max_seq_len 340 `
-  --accumulation_steps 8 `
+  --use_moe 0 `
   --directml_loss_scale 1024 `
-  --save_interval 100 `
   --from_weight none `
   --use_compile 0
 ```
@@ -189,14 +202,19 @@ Resume:
 python train_pretrain.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 2 `
+  --batch_size 32 `
+  --learning_rate 5e-4 `
+  --num_workers 8 `
+  --accumulation_steps 8 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 8 `
   --max_seq_len 340 `
-  --accumulation_steps 8 `
+  --use_moe 0 `
   --directml_loss_scale 1024 `
-  --save_interval 100 `
   --from_weight none `
   --from_resume 1 `
   --use_compile 0
@@ -220,15 +238,20 @@ Full training:
 python train_full_sft.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 2 `
+  --batch_size 16 `
+  --learning_rate 1e-5 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 16 `
   --max_seq_len 768 `
-  --accumulation_steps 1 `
+  --use_moe 0 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight pretrain `
   --use_compile 0
 ```
@@ -256,15 +279,20 @@ the sequential training script.
 python train_pretrain.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 2 `
+  --batch_size 1 `
+  --learning_rate 5e-4 `
+  --num_workers 8 `
+  --accumulation_steps 64 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 1 `
-  --batch_size 1 `
   --max_seq_len 340 `
-  --accumulation_steps 64 `
+  --use_moe 1 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight none `
   --use_compile 0
 ```
@@ -291,15 +319,20 @@ Requires `out/pretrain_768_moe.pth`.
 python train_full_sft.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 2 `
+  --batch_size 1 `
+  --learning_rate 1e-5 `
+  --num_workers 8 `
+  --accumulation_steps 64 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 1 `
-  --batch_size 1 `
   --max_seq_len 768 `
-  --accumulation_steps 64 `
+  --use_moe 1 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight pretrain `
   --use_compile 0
 ```
@@ -326,15 +359,20 @@ Uses the Dense Full SFT model by default.
 python train_lora.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 10 `
+  --batch_size 32 `
+  --learning_rate 1e-4 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 10 `
+  --save_interval 1000 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 32 `
   --max_seq_len 340 `
-  --accumulation_steps 1 `
+  --use_moe 0 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight full_sft `
   --use_compile 0
 ```
@@ -363,13 +401,19 @@ The sequential pipeline keeps DPO on the Dense Full SFT branch.
 python train_dpo.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 1 `
+  --batch_size 4 `
+  --learning_rate 4e-8 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 100 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 4 `
   --max_seq_len 1024 `
-  --accumulation_steps 1 `
-  --save_interval 100 `
+  --use_moe 0 `
+  --beta 0.15 `
   --from_weight full_sft `
   --use_compile 0
 ```
@@ -401,12 +445,17 @@ Command:
 python train_distillation.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 6 `
   --batch_size 32 `
-  --max_seq_len 340 `
+  --learning_rate 5e-6 `
+  --num_workers 8 `
   --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 100 `
+  --save_interval 100 `
+  --max_seq_len 340 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --student_hidden_size 768 `
   --student_num_layers 8 `
   --student_use_moe 0 `
@@ -438,15 +487,24 @@ checkpoints/full_dist_768_resume.pth
 python train_grpo.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 1 `
+  --batch_size 2 `
+  --learning_rate 3e-7 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 1 `
+  --save_interval 10 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 2 `
   --max_seq_len 768 `
-  --accumulation_steps 1 `
+  --max_gen_len 1024 `
+  --use_moe 0 `
+  --num_generations 6 `
+  --beta 0.1 `
+  --loss_type cispo `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight full_sft `
   --use_compile 0
 ```
@@ -473,15 +531,23 @@ The resume state also contains the scheduler state.
 python train_ppo.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 1 `
+  --batch_size 2 `
+  --learning_rate 3e-7 `
+  --critic_learning_rate 5e-7 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 1 `
+  --save_interval 10 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 2 `
   --max_seq_len 768 `
-  --accumulation_steps 1 `
+  --max_gen_len 1024 `
+  --use_moe 0 `
+  --mini_batch_size 2 `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight full_sft `
   --use_compile 0
 ```
@@ -508,15 +574,25 @@ PPO restores both the actor and critic training state.
 python train_agent.py `
   --device directml:1 `
   --dtype float16 `
+  --epochs 1 `
+  --batch_size 2 `
+  --learning_rate 3e-7 `
+  --num_workers 8 `
+  --accumulation_steps 1 `
+  --grad_clip 1.0 `
+  --log_interval 1 `
+  --save_interval 10 `
   --hidden_size 768 `
   --num_hidden_layers 8 `
-  --use_moe 0 `
-  --batch_size 2 `
   --max_seq_len 1024 `
-  --accumulation_steps 1 `
+  --max_gen_len 768 `
+  --max_total_len 2500 `
+  --use_moe 0 `
+  --num_generations 4 `
+  --beta 0.1 `
+  --loss_type cispo `
   --directml_loss_scale 1024 `
   --directml_adam_eps 1e-4 `
-  --save_interval 100 `
   --from_weight full_sft `
   --use_compile 0
 ```
@@ -545,7 +621,7 @@ From the repository root:
 .\scripts\train_all.ps1
 ```
 
-The updated script passes `--save_interval 100` to every stage.
+The sequential script should preserve each trainer's intended checkpoint interval unless a DirectML validation run deliberately overrides it.
 
 If a stage is interrupted, do **not** restart the whole pipeline
 immediately. Resume the interrupted trainer directly with its command

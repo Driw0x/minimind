@@ -706,13 +706,17 @@ Copy master weights back to FP16 model
 
 A later DirectML cross-entropy investigation showed that the default
 mean reduction with `ignore_index=-100` incorrectly normalized padded
-batches. Loss normalization is now performed explicitly over valid
-tokens.
+batches. The first explicit `reduction="sum" / valid_tokens` workaround
+was then shown to be incorrect as well on the tested DirectML FP16 path.
 
-A fresh run combining FP16 compute, FP32 master weights, and corrected
-loss normalization reached train-path loss `7.3925` at step `100` and
-`6.7785` at step `1000`. Top-1 accuracy reached `6.76%` and Top-1 repeat
-rate remained low at `0.76%`.
+The retained implementation computes `reduction="none"` per-token loss
+and performs the valid-token mean in FP32. On the batch-32 reference
+test, model loss `6.30274916` matched the DirectML per-token calculation
+exactly and remained within approximately `0.003` of the CPU FP32
+reference `6.30530691`.
+
+Earlier step-100 and step-1000 runs remain useful FP32-master validation
+evidence, but they predate the final cross-entropy reduction fix.
 
 ### Decision
 
@@ -724,20 +728,21 @@ checkpoints so optimizer precision is preserved across interruptions.
 Old resume checkpoints without master weights must not be used with the
 new path.
 
-DirectML causal-LM loss must also be normalized explicitly over valid
-non-padding tokens rather than relying on the backend's default
-cross-entropy mean reduction.
+DirectML causal-LM loss must use per-token cross-entropy followed by
+FP32 averaging over valid non-padding tokens. Neither the backend's
+default mean reduction nor the tested FP16 `sum / valid_tokens`
+workaround is retained.
 
 
 
 ------------------------------------------------------------------------
 
-## Corrected Dense Pretraining Completed Epoch 1
+## Intermediate Dense Pretraining Completed Epoch 1
 
-The final corrected Dense DirectML path was restarted from scratch using
+An intermediate Dense DirectML path was restarted from scratch using
 the upstream pretraining parameters, including physical
-`batch_size = 32`, while retaining the required DirectML FP16
-adaptations.
+`batch_size = 32`, FP32 master weights, and the initial
+`reduction="sum" / valid_tokens` loss workaround.
 
 The first complete epoch finished successfully.
 
@@ -758,17 +763,18 @@ Top-1 `6.76%`, repeat `0.76%`), the first full epoch shows substantial
 next-token accuracy improvement without a return of the historical
 self-copying collapse.
 
-Earlier aggregate losses around `12–13` from `diagnose_pretrain.py`
-were identified as a diagnostic aggregation problem. The model training
-loss itself matches independent manual cross-entropy exactly.
+A later reduction-specific test showed that this run still used an
+incorrect DirectML `reduction="sum" / valid_tokens` loss. Its checkpoint
+is therefore retained for investigation only and is not the final
+pretraining base.
 
 ### Decision
 
-The current corrected training path, rather than the earlier M4
-pure-FP16 benchmark path, is the reference for final Dense pretraining
-quality.
+The final Dense pretraining quality reference must be produced from
+scratch with FP32 master weights and the retained
+`reduction="none"` → FP32 valid-token mean loss.
 
-The successful full epoch also demonstrates that `batch_size = 32` is
-viable with the current corrected implementation on the reference
-hardware; older OOM observations remain historical results from an
+The completed intermediate epoch still demonstrates that physical
+`batch_size = 32` is executable through a full epoch on the current
+memory path; older OOM observations remain historical results from an
 earlier training path.

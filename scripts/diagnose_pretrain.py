@@ -29,6 +29,7 @@ def main():
     parser.add_argument("--max_seq_len", type=int, default=340)
     parser.add_argument("--sample_index", type=int, default=0)
     parser.add_argument("--num_samples", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=8)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -60,6 +61,7 @@ def main():
     end_index = min(start_index + args.num_samples, len(dataset))
 
     total_train_loss = 0.0
+    total_manual_loss = 0.0
     total_tokens = 0
     total_correct = 0
     total_repeat = 0
@@ -77,83 +79,110 @@ def main():
     print(f"Weight: {args.weight}")
     print(f"Samples: {start_index} -> {end_index - 1}")
     print(f"Count: {end_index - start_index}")
+    print(f"Batch size: {args.batch_size}")
     print("============================================================")
 
-    for index in range(start_index, end_index):
-        input_ids, labels = dataset[index]
+    for batch_start in range(start_index, end_index, args.batch_size):
+        batch_end = min(batch_start + args.batch_size, end_index)
 
-        input_ids = input_ids.unsqueeze(0).to(device)
-        labels_device = labels.unsqueeze(0).to(device)
+        samples = [dataset[index] for index in range(batch_start, batch_end)]
+        input_ids = torch.stack([sample[0] for sample in samples])
+        labels = torch.stack([sample[1] for sample in samples])
 
-        targets = labels[1:].cpu()
-        previous_tokens = input_ids[0, :-1].detach().cpu()
-        mask = targets != -100
-
-        targets = targets[mask]
-        previous_tokens = previous_tokens[mask]
-
-        if targets.numel() == 0:
-            continue
-
-        token_count = targets.numel()
+        input_ids_device = input_ids.to(device)
+        labels_device = labels.to(device)
 
         with torch.no_grad():
-            train_outputs = model(
-                input_ids=input_ids,
+            outputs = model(
+                input_ids=input_ids_device,
                 labels=labels_device
             )
 
-            diagnostic_outputs = model(
-                input_ids=input_ids
+        batch_targets = labels[:, 1:].cpu()
+        batch_previous_tokens = input_ids[:, :-1].cpu()
+        batch_mask = batch_targets != -100
+        batch_valid_tokens = int(batch_mask.sum().item())
+
+        if batch_valid_tokens == 0:
+            continue
+
+        train_loss = outputs.loss.detach().float().item()
+        total_train_loss += train_loss * batch_valid_tokens
+
+        logits = outputs.logits[:, :-1, :].detach().float().cpu()
+
+        flat_logits = logits.reshape(-1, logits.size(-1))
+        flat_targets = batch_targets.reshape(-1)
+        flat_mask = batch_mask.reshape(-1)
+
+        valid_logits = flat_logits[flat_mask]
+        valid_targets = flat_targets[flat_mask]
+
+        manual_loss_sum = F.cross_entropy(
+            valid_logits,
+            valid_targets,
+            reduction="sum"
+        ).item()
+        total_manual_loss += manual_loss_sum
+
+        for local_idx, index in enumerate(range(batch_start, batch_end)):
+            targets = batch_targets[local_idx]
+            previous_tokens = batch_previous_tokens[local_idx]
+            mask = batch_mask[local_idx]
+
+            targets = targets[mask]
+            previous_tokens = previous_tokens[mask]
+
+            if targets.numel() == 0:
+                continue
+
+            token_count = targets.numel()
+            sample_logits = logits[local_idx][mask]
+
+            log_probs = F.log_softmax(sample_logits, dim=-1)
+            probs = log_probs.exp()
+            predictions = sample_logits.argmax(dim=-1)
+
+            correct_mask = predictions == targets
+            repeat_mask = predictions == previous_tokens
+
+            sample_correct = correct_mask.sum().item()
+            sample_repeat = repeat_mask.sum().item()
+            sample_true_repeat = (targets == previous_tokens).sum().item()
+            sample_both = (correct_mask & repeat_mask).sum().item()
+            sample_correct_only = (correct_mask & ~repeat_mask).sum().item()
+            sample_repeat_only = (repeat_mask & ~correct_mask).sum().item()
+            sample_entropy = -(probs * log_probs).sum(dim=-1).sum().item()
+
+            total_tokens += token_count
+            total_correct += sample_correct
+            total_repeat += sample_repeat
+            total_true_repeat += sample_true_repeat
+            total_both += sample_both
+            total_correct_only += sample_correct_only
+            total_repeat_only += sample_repeat_only
+            total_entropy += sample_entropy
+
+            print(
+                f"[{index}] "
+                f"tokens={token_count} "
+                f"batch_train_loss={train_loss:.4f} "
+                f"top1={sample_correct / token_count:.2%} "
+                f"repeat={sample_repeat / token_count:.2%} "
+                f"true_repeat={sample_true_repeat / token_count:.2%} "
+                f"both={sample_both / token_count:.2%} "
+                f"correct_only={sample_correct_only / token_count:.2%} "
+                f"repeat_only={sample_repeat_only / token_count:.2%}"
             )
-
-        train_loss = train_outputs.loss.detach().float().item()
-
-        logits = diagnostic_outputs.logits[0, :-1].detach().float().cpu()
-        logits = logits[mask]
-
-        log_probs = F.log_softmax(logits, dim=-1)
-        probs = log_probs.exp()
-        predictions = logits.argmax(dim=-1)
-
-        correct_mask = predictions == targets
-        repeat_mask = predictions == previous_tokens
-
-        sample_correct = correct_mask.sum().item()
-        sample_repeat = repeat_mask.sum().item()
-        sample_true_repeat = (targets == previous_tokens).sum().item()
-        sample_both = (correct_mask & repeat_mask).sum().item()
-        sample_correct_only = (correct_mask & ~repeat_mask).sum().item()
-        sample_repeat_only = (repeat_mask & ~correct_mask).sum().item()
-        sample_entropy = -(probs * log_probs).sum(dim=-1).sum().item()
-
-        total_train_loss += train_loss * token_count
-        total_tokens += token_count
-        total_correct += sample_correct
-        total_repeat += sample_repeat
-        total_true_repeat += sample_true_repeat
-        total_both += sample_both
-        total_correct_only += sample_correct_only
-        total_repeat_only += sample_repeat_only
-        total_entropy += sample_entropy
-
-        print(
-            f"[{index}] "
-            f"tokens={token_count} "
-            f"train_loss={train_loss:.4f} "
-            f"top1={sample_correct / token_count:.2%} "
-            f"repeat={sample_repeat / token_count:.2%} "
-            f"true_repeat={sample_true_repeat / token_count:.2%} "
-            f"both={sample_both / token_count:.2%} "
-            f"correct_only={sample_correct_only / token_count:.2%} "
-            f"repeat_only={sample_repeat_only / token_count:.2%}"
-        )
 
     if total_tokens == 0:
         raise RuntimeError("No valid tokens found.")
 
     mean_train_loss = total_train_loss / total_tokens
-    perplexity = math.exp(min(mean_train_loss, 20))
+    mean_manual_loss = total_manual_loss / total_tokens
+    loss_difference = abs(mean_train_loss - mean_manual_loss)
+
+    train_perplexity = math.exp(min(mean_train_loss, 20))
     top1_accuracy = total_correct / total_tokens
     repeat_rate = total_repeat / total_tokens
     true_repeat_rate = total_true_repeat / total_tokens
@@ -167,7 +196,9 @@ def main():
     print("============================================================")
     print(f"Valid tokens: {total_tokens}")
     print(f"Train-path mean loss: {mean_train_loss:.4f}")
-    print(f"Train-path perplexity: {perplexity:.2f}")
+    print(f"Manual token mean loss: {mean_manual_loss:.4f}")
+    print(f"Loss difference: {loss_difference:.10f}")
+    print(f"Train-path perplexity: {train_perplexity:.2f}")
     print(f"Top-1 accuracy: {top1_accuracy:.2%}")
     print(f"Top-1 repeat rate: {repeat_rate:.2%}")
     print(f"True-data repeat rate: {true_repeat_rate:.2%}")

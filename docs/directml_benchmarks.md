@@ -845,7 +845,7 @@ not included in this specific 9-test runner.
 
 ------------------------------------------------------------------------
 
-# FP32 Master-Weight and Loss-Normalization Validation
+# FP32 Master-Weight and Cross-Entropy Validation
 
 A later checkpoint-quality investigation showed that the earlier
 pure-FP16 DirectML optimizer path could remain finite while converging
@@ -854,40 +854,64 @@ to a degenerate self-copying model.
 Dense pretraining was therefore changed to use FP16 compute with FP32
 master weights and FP32 AdamW updates.
 
-A second investigation showed that DirectML
-`F.cross_entropy(..., ignore_index=-100, reduction="mean")` normalized
-the loss over all positions instead of valid non-ignored tokens. The
-model loss now uses `reduction="sum"` divided explicitly by the number
-of valid tokens.
+A separate loss investigation showed two DirectML reduction issues on
+the tested FP16 path:
 
-A fresh corrected pretraining run produced:
+1. `reduction="mean"` with `ignore_index=-100` did not normalize only
+   over valid tokens;
+2. the initial `reduction="sum" / valid_tokens` workaround also failed
+   to reproduce the CPU FP32 reference.
 
-  ------------------------------------------------------------------------
-  Checkpoint       Train-path Top-1 accuracy   Top-1 repeat   Mean entropy
-                         loss                               
-  ------------ -------------- -------------- -------------- --------------
-  Step 100             7.3925          3.26%          3.26%         7.2241
+The decisive same-logit reduction comparison produced:
 
-  Step 1000            6.7785          6.76%          0.76%         6.1648
-  ------------------------------------------------------------------------
+``` text
+Batch 8:
+sum / valid:             14.1078
+none → FP32 valid mean:   6.6688
+CPU FP32 reference:       6.6715
 
-The corrected path therefore remains finite, improves next-token
-prediction quality, and avoids the previous self-copying collapse.
+Batch 32:
+sum / valid:             10.7772
+none → FP32 valid mean:   6.3027
+CPU FP32 reference:       6.3053
+```
 
-This validation supersedes finite-loss-only validation and earlier
-diagnostics obtained before the DirectML cross-entropy normalization
-issue was corrected.
+The final loss implementation therefore uses:
 
+``` python
+token_loss = F.cross_entropy(
+    x,
+    y,
+    ignore_index=-100,
+    reduction="none",
+)
+valid = y != -100
+loss = token_loss[valid].float().mean()
+```
 
+After the change, the batch-32 model loss matched the DirectML
+per-token FP32 mean exactly and remained within approximately `0.003`
+of the CPU FP32 reference:
+
+``` text
+Model outputs.loss:        6.30274916
+DirectML none/FP32 mean:   6.30274916
+CPU FP32 reference:        6.30530691
+```
+
+The earlier step-100 and step-1000 runs validated the FP32-master
+optimizer direction, but they were trained before this final
+cross-entropy reduction correction and are retained as intermediate
+investigation results rather than final training-quality references.
 
 ------------------------------------------------------------------------
 
-# Corrected Full-Epoch Dense Pretraining Validation
+# Intermediate Full-Epoch Dense Pretraining Validation
 
-After the FP32 master-weight and valid-token cross-entropy corrections,
-Dense pretraining was restarted from scratch using the upstream
-pretraining parameters, with only the DirectML precision/backend path
-adapted:
+After the FP32 master-weight change and the initial
+`reduction="sum" / valid_tokens` cross-entropy workaround, Dense
+pretraining was restarted from scratch using the upstream pretraining
+parameters, with only the DirectML precision/backend path adapted:
 
 ``` text
 Device:                 directml:1
@@ -932,15 +956,48 @@ Difference:   0.0000000000
 MATCH
 ```
 
-The corrected epoch-1 checkpoint therefore shows continued learning
-relative to the corrected step-1000 checkpoint (`loss 6.7785`,
-Top-1 `6.76%`) while keeping the repeat rate low.
+The checkpoint showed useful next-token learning and a low repeat
+rate, but the later reduction comparison proved that this run still used
+an incorrect DirectML `reduction="sum" / valid_tokens` loss during
+backpropagation.
 
-The earlier aggregate loss values around `12–13` reported by
-`diagnose_pretrain.py` were traced to the diagnostic aggregation path,
-not to the model or training loss. The dedicated train-vs-manual loss
-test confirmed that the checkpoint loss is correctly normalized.
+It is therefore retained as evidence that physical `batch_size = 32`
+can execute through a full epoch on the current memory path, but it is
+not a final training-quality reference and should not be used as the
+base checkpoint for the final SFT pipeline.
 
-This full-epoch result supersedes the earlier assumption that physical
-`batch_size = 32` is necessarily unsustainable for the current corrected
-Dense DirectML pretraining path on the reference hardware.
+Final Dense pretraining must be restarted from scratch with the retained
+`reduction="none"` → FP32 valid-token mean implementation.
+
+------------------------------------------------------------------------
+
+# Final Loss Path — 1200-Step Validation
+
+The final DirectML loss path was validated through step `1200` using
+FP16 compute, FP32 master weights, and per-token cross-entropy followed
+by FP32 valid-token averaging.
+
+Two independent 256-sample dataset regions produced:
+
+| Samples | Train loss | Manual loss | Difference | Top-1 | Repeat |
+|---|---:|---:|---:|---:|---:|
+| 0–255 | 6.3752 | 6.3779 | 0.00264 | 8.66% | 1.96% |
+| 100000–100255 | 6.3568 | 6.3595 | 0.00263 | 8.91% | 2.08% |
+
+The training-path and independently computed token loss remain aligned
+within approximately `0.003`.
+
+Compared with step `200`, loss decreased from approximately `7.18` to
+`6.36`, while Top-1 accuracy increased from approximately `5.1%` to
+`8.8%`.
+
+The Top-1 repeat rate remained low compared with the historical
+self-copying failure, and Top-1 correct-and-repeat remained approximately
+`0.02%` on both evaluation regions.
+
+No recurrence of the historical self-copying collapse was observed.
+
+This result validates the final FP16 compute + FP32 master-weight +
+per-token FP32-valid-mean loss path beyond the initial short checkpoint
+tests. Full-epoch validation remains pending.
+

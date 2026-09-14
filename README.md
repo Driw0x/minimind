@@ -51,22 +51,22 @@ issues specific to the tested DirectML path:
   not normalize over valid tokens as expected.
 
 Dense DirectML pretraining now uses FP16 compute with FP32 master
-weights and explicit valid-token cross-entropy normalization.
+weights and per-token cross-entropy followed by FP32 averaging over
+valid non-padding tokens.
 
-A fresh corrected pretraining run has completed its first full epoch
-using the upstream physical batch size of 32.
+Targeted reduction tests showed that both the DirectML default mean
+reduction and the initial `sum / valid_tokens` workaround were
+incorrect on the tested FP16 path. The retained implementation matches
+the CPU FP32 reference within approximately `0.003` on the batch-32
+validation case.
 
-Checkpoint validation reached:
+Earlier full-epoch checkpoints produced before this final loss
+correction are retained as investigation artifacts rather than final
+training bases. Final Dense pretraining is being rerun from scratch with
+the corrected loss path.
 
-- token-weighted loss: `6.1017`;
-- Top-1 accuracy: `15.07%`;
-- Top-1 repeat rate: `0.83%`.
-
-Model loss and independently computed token-normalized cross-entropy
-match exactly on the reference consistency test.
-
-The project is now completing the remaining M5 full-training and
-final validation work.
+The project is now completing the remaining M5 full-training and final
+validation work.
 
 See the [project roadmap](docs/roadmap.md) for the complete development
 plan.
@@ -299,7 +299,7 @@ Changes include:
 -   DirectML compatibility and real-training benchmarking;
 -   DirectML FP16 Dense pretraining with static loss scaling and FP32
     master-weight optimizer updates;
--   explicit valid-token cross-entropy normalization for DirectML;
+-   per-token cross-entropy with FP32 valid-token averaging for DirectML;
 -   bounded `--max_steps` validation across the main trainable
     workflows;
 -   explicit cross-trainer DirectML smoke validation;

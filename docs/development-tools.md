@@ -97,13 +97,9 @@ of the DirectML training pipeline on Windows.
 
 `train_all.ps1` uses trainer-specific batch-size, sequence-length, and
 gradient-accumulation settings instead of applying one shared
-configuration to every stage. It also passes:
-
-``` text
---save_interval 100
-```
-
-to refresh the latest resume checkpoint every 100 iterations.
+configuration to every stage. Checkpoint intervals are trainer-specific and are documented in
+`training_commands.md`; short validation runs may intentionally override
+them.
 
 See [`training_commands.md`](training_commands.md) for the complete
 per-trainer configuration table and the `--from_resume 1` recovery
@@ -210,12 +206,15 @@ investigation are stored in `tests/`:
 
 ``` text
 test_directml_cross_entropy.py
+test_directml_loss_reductions.py
 test_batch_loss_consistency.py
 test_train_diagnostic_loss.py
 ```
 
-They validate the DirectML `cross_entropy` reduction behavior and
-compare training-path loss with token-normalized diagnostic loss. These
+They validate the DirectML `cross_entropy` reduction behavior,
+including the retained per-token `reduction="none"` → FP32 valid-token
+mean path, and compare training-path loss with token-normalized
+diagnostic loss. These
 tests are kept separate from `scripts/`, while
 `scripts/diagnose_pretrain.py` remains the checkpoint-analysis utility.
 
