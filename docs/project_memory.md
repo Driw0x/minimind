@@ -778,3 +778,30 @@ The completed intermediate epoch still demonstrates that physical
 `batch_size = 32` is executable through a full epoch on the current
 memory path; older OOM observations remain historical results from an
 earlier training path.
+
+------------------------------------------------------------------------
+
+## Final DirectML Loss Path Completed Epoch 1
+
+The retained Dense DirectML pretraining path completed its first full
+epoch from scratch with FP16 model compute, FP32 master weights,
+per-token cross-entropy (`reduction="none"`), and FP32 valid-token
+averaging.
+
+Two independent 256-sample diagnostic regions produced train/manual
+losses of `6.0612 / 6.0637` and `6.0177 / 6.0201`, with Top-1 accuracy
+of `13.71%` and `13.80%`, repeat rates of `0.81%` and `0.71%`, and mean
+entropy of `5.3487` and `5.3436`.
+
+The model and independent token losses remained aligned within
+approximately `0.0025` after a complete epoch, and the historical
+self-copying collapse did not recur.
+
+### Decision
+
+The FP16 compute + FP32 master-weight + per-token FP32-valid-mean path is
+now the validated full-epoch Dense DirectML pretraining path.
+
+The same run should continue through epoch 2 before the final pretraining
+checkpoint is promoted as the base for the next training stage.
+

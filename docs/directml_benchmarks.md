@@ -999,5 +999,32 @@ No recurrence of the historical self-copying collapse was observed.
 
 This result validates the final FP16 compute + FP32 master-weight +
 per-token FP32-valid-mean loss path beyond the initial short checkpoint
-tests. Full-epoch validation remains pending.
+tests. Full-epoch validation was subsequently completed successfully.
+
+------------------------------------------------------------------------
+
+# Final Loss Path — Full Epoch 1 Validation
+
+The final DirectML Dense pretraining path completed its first full epoch
+using FP16 compute, FP32 master weights, and per-token cross-entropy
+followed by FP32 valid-token averaging.
+
+| Samples | Train loss | Manual loss | Difference | Top-1 | Repeat | Entropy |
+|---|---:|---:|---:|---:|---:|---:|
+| 0–255 | 6.0612 | 6.0637 | 0.00250 | 13.71% | 0.81% | 5.3487 |
+| 100000–100255 | 6.0177 | 6.0201 | 0.00246 | 13.80% | 0.71% | 5.3436 |
+
+The training-path and independently computed token losses remained
+aligned within approximately `0.0025` after a complete epoch.
+
+Compared with step `1200`, train loss decreased from approximately
+`6.36` to `6.02–6.06`, while Top-1 accuracy increased from
+approximately `8.8%` to `13.7–13.8%`.
+
+Top-1 correct-and-repeat remained very low (`0.06%` and `0.03%`), and
+the historical self-copying collapse did not recur.
+
+This is the first successful full-epoch validation of the retained
+DirectML Dense pretraining path. Epoch 2 can therefore continue on the
+same training run. Final two-epoch validation remains pending.
 

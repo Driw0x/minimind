@@ -343,6 +343,19 @@ Finalization**.
     Top-1 accuracy reached `8.66%` and `8.91%`, and Top-1 repeat rate
     remained limited to `1.96%` and `2.08%`.
 -   Confirmed no recurrence of the historical self-copying collapse;
-    final full-epoch validation with the retained loss path remains
-    pending.
+    no recurrence was observed through the subsequent full epoch.
+-   Completed epoch 1 of the final Dense DirectML pretraining run using
+    FP16 compute, FP32 master weights, and per-token FP32-valid-mean
+    cross-entropy.
+-   On samples `0–255`, validated train loss `6.0612`, manual loss
+    `6.0637`, Top-1 accuracy `13.71%`, repeat rate `0.81%`, and mean
+    entropy `5.3487`.
+-   On samples `100000–100255`, validated train loss `6.0177`, manual
+    loss `6.0201`, Top-1 accuracy `13.80%`, repeat rate `0.71%`, and mean
+    entropy `5.3436`.
+-   Confirmed train/manual loss agreement within approximately `0.0025`
+    after a complete epoch and no recurrence of the historical
+    self-copying collapse.
+-   Continued the same validated run into epoch 2; final two-epoch
+    validation remains pending.
 
