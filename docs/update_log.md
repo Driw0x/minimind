@@ -356,6 +356,13 @@ Finalization**.
 -   Confirmed train/manual loss agreement within approximately `0.0025`
     after a complete epoch and no recurrence of the historical
     self-copying collapse.
--   Continued the same validated run into epoch 2; final two-epoch
-    validation remains pending.
+-   Completed epoch 2 of the final corrected Dense DirectML pretraining
+    run.
+-   Evaluated the final checkpoint across `4,096` samples from four
+    dataset regions; train/manual loss remained closely aligned and
+    Top-1 repeat rates remained below `1%`.
+-   Confirmed through qualitative generation that the historical
+    repeated-token collapse did not recur.
+-   Retained the epoch-2 checkpoint as the final Dense pretraining base
+    for Full SFT.
 

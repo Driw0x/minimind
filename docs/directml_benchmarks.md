@@ -1025,6 +1025,27 @@ Top-1 correct-and-repeat remained very low (`0.06%` and `0.03%`), and
 the historical self-copying collapse did not recur.
 
 This is the first successful full-epoch validation of the retained
-DirectML Dense pretraining path. Epoch 2 can therefore continue on the
-same training run. Final two-epoch validation remains pending.
+DirectML Dense pretraining path.
+
+## Final Epoch 2 Validation
+
+The same corrected run completed epoch 2 successfully. A broader
+evaluation covered 4,096 samples across four dataset regions:
+
+| Sample region | Valid tokens | Train loss | Manual loss | Top-1 | Repeat |
+|---|---:|---:|---:|---:|---:|
+| 0–1023 | 205,439 | 6.3317 | 6.3343 | 12.23% | 0.69% |
+| 300000–301023 | 116,790 | 6.3619 | 6.3645 | 10.57% | 0.56% |
+| 600000–601023 | 92,088 | 5.9203 | 5.9288 | 13.22% | 0.96% |
+| 1000000–1001023 | 261,529 | 6.0706 | 6.0731 | 12.94% | 0.73% |
+
+Across these regions, the training and independent manual losses
+remained closely aligned and the repeat rate stayed below `1%`.
+
+A final qualitative generation check produced varied output rather than
+the historical repeated-token collapse. The text remained weak and
+fragmentary, as expected before supervised fine-tuning.
+
+The corrected two-epoch Dense pretraining run is therefore retained as
+the final pretraining base for Full SFT.
 

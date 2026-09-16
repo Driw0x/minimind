@@ -802,6 +802,14 @@ self-copying collapse did not recur.
 The FP16 compute + FP32 master-weight + per-token FP32-valid-mean path is
 now the validated full-epoch Dense DirectML pretraining path.
 
-The same run should continue through epoch 2 before the final pretraining
-checkpoint is promoted as the base for the next training stage.
+The same corrected run subsequently completed epoch 2. A broader
+4,096-sample evaluation across four dataset regions kept train/manual
+loss closely aligned, with Top-1 repeat rates between `0.56%` and
+`0.96%`. A qualitative generation check also showed no return of the
+historical repeated-token collapse.
+
+### Final decision
+
+The completed epoch-2 checkpoint is retained as the final Dense
+pretraining base for Full SFT.
 

@@ -62,11 +62,13 @@ validation case.
 
 Earlier full-epoch checkpoints produced before this final loss
 correction are retained as investigation artifacts rather than final
-training bases. Final Dense pretraining is being rerun from scratch with
-the corrected loss path.
+training bases. Final Dense pretraining was rerun from scratch with the
+corrected loss path and completed both epochs successfully.
 
-The project is now completing the remaining M5 full-training and final
-validation work.
+The final checkpoint was additionally evaluated across 4,096 samples
+from four dataset regions without recurrence of the historical
+self-copying collapse. Dense pretraining is complete; Full SFT is the
+next full-training stage.
 
 See the [project roadmap](docs/roadmap.md) for the complete development
 plan.
