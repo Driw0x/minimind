@@ -43,12 +43,9 @@ Dense Pretrain additionally uses FP32 master weights with AdamW
 `eps = 1e-8`. Other trainer-specific precision paths remain unchanged
 unless explicitly documented.
 
-### DirectML validated baseline
+### Historical M4 DirectML baseline
 
-The table above must **not** be confused with the sustained DirectML
-pretraining baseline validated during M4.
-
-The sustained validation result remains:
+The sustained M4 validation baseline was:
 
 ``` text
 Trainer: Dense Pretrain
@@ -57,17 +54,29 @@ max_seq_len = 340
 accumulation_steps = 8
 compute dtype = float16
 loss_scale = 1024
-optimizer weights = float32 master weights
-AdamW eps = 1e-8
+AdamW eps = 1e-4
 ```
 
-This `8 × 340` configuration was validated through global step `1100`
-with teacher-forced checkpoint diagnostics. It is a **validated DirectML
-baseline**, not the default configuration of every trainer.
+This configuration remains useful as historical M4 validation evidence.
 
-The larger upstream trainer values in the table are therefore training
-targets to validate on DirectML. A short compatibility pass does not
-guarantee that they will remain stable or fit in VRAM during a full run.
+### Current M5 Dense reference
+
+The retained Dense pretraining path uses:
+
+``` text
+batch_size = 32
+max_seq_len = 340
+accumulation_steps = 8
+compute dtype = float16
+optimizer weights = float32 master weights
+AdamW eps = 1e-8
+loss = per-token cross-entropy → FP32 valid-token mean
+```
+
+This corrected path completed both full pretraining epochs successfully.
+
+The larger trainer values in the table remain training targets to validate
+individually on DirectML.
 
 ### MoE DirectML override
 

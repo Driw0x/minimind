@@ -164,6 +164,32 @@ training.
 
 ------------------------------------------------------------------------
 
+## Log-Sync Trainer Benchmark
+
+The `benchmark_log_sync.ps1` utility compares the stable Dense pretraining
+trainer with the log-synchronized variant over the same bounded workload.
+
+Run it from the project root:
+
+``` powershell
+.\scripts\benchmark_log_sync.ps1
+```
+
+The current 1000-step comparison measured:
+
+``` text
+Stable:    2.0038 s / step
+Log-Sync:  1.9307 s / step
+Speedup:   1.038×
+Reduction: 3.65%
+```
+
+The benchmark validates the throughput improvement. Checkpoint-quality
+validation remains required before Log-Sync becomes the final training
+reference.
+
+------------------------------------------------------------------------
+
 ## Bounded Training Runs
 
 The DirectML-compatible model trainers support bounded runs through the

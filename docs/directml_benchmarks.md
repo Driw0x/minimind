@@ -499,9 +499,9 @@ Real-data stability results remain:
     16 × 340 → OOM after first accumulation cycle
      8 × 340 → PASS for 100 bounded steps
 
-For the current environment, `batch_size = 8` with `max_seq_len = 340`
-and gradient accumulation `8` remains the preferred real-training
-reference configuration.
+At this stage of the M4 investigation, `batch_size = 8` with
+`max_seq_len = 340` and gradient accumulation `8` was the preferred
+real-training reference configuration.
 
 After correcting synchronization overhead in the measurement path, this
 configuration achieves approximately:
@@ -541,7 +541,7 @@ this fallback alone.
 
 ------------------------------------------------------------------------
 
-# Current Performance Conclusion
+# Intermediate M4 Performance Conclusion
 
 The M4 real-training investigation establishes several important
 observations.
@@ -577,7 +577,7 @@ Full-scale training is therefore substantially more practical than the
 first M4 measurements suggested, although the 100-step benchmark is not
 yet sufficient to prove sustained full-epoch stability.
 
-Further M4 validation should focus on:
+At that stage, further M4 validation focused on:
 
 -   sustained training stability beyond the bounded 100-step run;
 -   validation of the corrected throughput over longer runs;
@@ -1048,4 +1048,125 @@ fragmentary, as expected before supervised fine-tuning.
 
 The corrected two-epoch Dense pretraining run is therefore retained as
 the final pretraining base for Full SFT.
+------------------------------------------------------------------------
 
+# Fast DirectML FP16 Re-Test
+
+A separate experimental pretraining path was tested to determine whether
+the FP32 master-weight mechanism could be removed to improve DirectML
+throughput.
+
+The experimental path kept:
+
+``` text
+FP16 model parameters
+FP16 forward / backward
+Static loss scale = 1024
+AdamW directly on FP16 parameters
+```
+
+and intentionally removed the FP32 master parameters and the
+master-to-model copy.
+
+Checkpoint diagnostics on the same `0–255` evaluation region showed:
+
+| Step | Train-path loss | Manual loss | Top-1 | Repeat | Entropy |
+|---:|---:|---:|---:|---:|---:|
+| 1000 | 9.2573 | 9.2609 | 0.31% | 0.29% | 7.0694 |
+| 2000 | 8.3102 | 8.3136 | 0.92% | 1.20% | 7.2550 |
+| 5000 | 7.3196 | 7.3225 | 1.80% | 39.24% | 7.3674 |
+
+The true-data repeat rate remained approximately `0.29%`.
+
+Although the diagnostic loss improved between steps `1000` and `5000`,
+the Top-1 repeat rate rose sharply to `39.24%`. At step `5000`,
+approximately `39.10%` of predictions were repeat-only errors.
+
+This reproduces the important long-run failure mode already observed in
+the earlier pure-FP16 optimizer path: finite and decreasing loss is not
+sufficient evidence that direct FP16 parameter updates are learning a
+usable model.
+
+The exact failure trajectory is not identical to the earlier
+`93.48%` self-copying collapse, but both experiments show that direct
+AdamW updates on FP16 model parameters are not retained as a reliable
+pretraining path.
+
+The FP32-master path therefore remains the reference architecture:
+
+``` text
+FP16 forward / backward
+        ↓
+FP32 gradient conversion and unscale
+        ↓
+FP32 gradient clipping
+        ↓
+AdamW on FP32 master weights
+        ↓
+FP32 master → FP16 model synchronization
+```
+
+------------------------------------------------------------------------
+
+# Stable Master-Weight Synchronization Optimization
+
+Performance optimization is now focused on preserving the validated FP32
+master-weight architecture while reducing diagnostic synchronization
+overhead.
+
+The previous stable trainer materialized DirectML-produced scalar values
+on the CPU more frequently than required for training, including
+finite-loss checks on every batch and gradient-norm checks on optimizer
+updates.
+
+An optimized trainer variant now keeps the optimization path unchanged
+but performs diagnostic DirectML-to-CPU reads only at
+`log_interval` boundaries.
+
+Conceptually:
+
+``` text
+Between log points:
+    FP16 forward / backward
+    FP32 master update
+    gradient clipping
+    master → model synchronization
+    no diagnostic .cpu().item()
+
+At log_interval:
+    read loss
+    read latest gradient norm
+    finite-value checks
+    logging
+```
+
+This change is intended to reduce synchronization overhead without
+removing FP32 master weights.
+
+A direct `1000`-step comparison was then run with the same training
+configuration for both trainers:
+
+``` text
+Steps:                    1000
+
+Stable total:             2003.79 s
+Log-Sync total:           1930.75 s
+
+Stable time / step:       2.0038 s
+Log-Sync time / step:     1.9307 s
+
+Stable steps / second:    0.4991
+Log-Sync steps / second:  0.5179
+
+Speedup:                  1.038×
+Time reduction:           3.65%
+```
+
+The optimized trainer reduced total runtime by approximately `73.04 s`
+over `1000` steps while preserving the FP32 master-weight optimization
+path.
+
+The throughput improvement is therefore validated for the tested
+configuration. Checkpoint-quality validation remains pending before the
+log-synchronized trainer replaces the stable trainer as the final
+training reference.

@@ -288,8 +288,8 @@ Finalization**.
     settings to the sequential training workflow, while keeping the M4
     `8 × 340` configuration documented as the sustained DirectML
     pretraining baseline.
--   Added automatic resume checkpoint refresh every 100 iterations and
-    documented interrupted-training recovery with `--from_resume 1`.
+-   Added trainer-specific periodic resume checkpoints and documented
+    interrupted-training recovery with `--from_resume 1`.
 -   Identified incorrect DirectML mean reduction for
     `cross_entropy(..., ignore_index=-100)` on padded causal-LM batches.
 -   Replaced implicit mean reduction with explicit valid-token loss
@@ -365,4 +365,34 @@ Finalization**.
     repeated-token collapse did not recur.
 -   Retained the epoch-2 checkpoint as the final Dense pretraining base
     for Full SFT.
-
+-   Compared upstream CUDA mixed precision with the DirectML path and
+    confirmed that upstream keeps FP32 model parameters while using BF16
+    autocast for compatible compute operations.
+-   Tested an upstream-like DirectML BF16 tensor path; the current
+    DirectML backend rejected `BFloat16` before the first training step.
+-   Re-tested Dense pretraining without FP32 master weights using direct
+    AdamW updates on FP16 model parameters.
+-   At step `1000`, the fast direct-FP16 checkpoint produced diagnostic
+    loss `9.2573`, Top-1 accuracy `0.31%`, and repeat rate `0.29%`.
+-   At step `2000`, diagnostic loss improved to `8.3102` and Top-1 to
+    `0.92%`, while repeat rate increased to `1.20%`.
+-   At step `5000`, diagnostic loss improved further to `7.3196` but
+    Top-1 repeat rate rose sharply to `39.24%` while the true-data repeat
+    rate remained approximately `0.29%`.
+-   Rejected the direct-FP16 optimizer path as a sustained training
+    strategy and retained FP16 compute with FP32 master weights and FP32
+    AdamW updates.
+-   Began optimizing the retained stable path by limiting diagnostic
+    DirectML-to-CPU scalar synchronization to `log_interval` boundaries
+    instead of every batch or optimizer update.
+-   Kept gradient clipping, FP32 master updates, and master-to-model
+    synchronization unchanged on every optimizer step.
+-   Benchmarked the stable and log-synchronized trainers over `1000` steps
+    with the same DirectML pretraining configuration.
+-   Measured `2003.79 s` for the stable trainer and `1930.75 s` for the
+    log-synchronized trainer.
+-   Reduced average time per step from `2.0038 s` to `1.9307 s`,
+    corresponding to a `1.038×` speedup and `3.65%` time reduction.
+-   Throughput validation for the log-synchronized trainer is complete;
+    checkpoint-quality validation remains pending before it becomes the
+    final reference trainer.

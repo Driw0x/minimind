@@ -112,6 +112,11 @@ and identify the main performance bottlenecks.
 > losses, and the consolidated DirectML FP16 trainer smoke suite passed
 > all `9/9` included workflows, including Dense and MoE validation.
 > The tested configuration is considered practically viable.
+>
+> This M4 baseline is retained as historical validation evidence.
+> M5 later replaced direct FP16 parameter updates with FP16 compute and
+> FP32 master-weight optimization after long-run checkpoint-quality
+> investigation.
 
 ------------------------------------------------------------------------
 
@@ -131,7 +136,10 @@ viability investigation.
 -   [ ] Publish a reproducible DirectML-ready configuration
 -   [x] Document periodic checkpoint and resume workflow
 -   [x] Correct DirectML cross-entropy normalization with ignored padding
--   [x] Validate FP16 + FP32-master pretraining through a full epoch
+-   [x] Validate FP16 + FP32-master pretraining through two full epochs
+-   [x] Reject direct FP16 AdamW through long-run checkpoint diagnostics
+-   [x] Benchmark reduced diagnostic CPU synchronization
+-   [ ] Validate Log-Sync checkpoint quality
 
 ### If DirectML training remains impractical
 

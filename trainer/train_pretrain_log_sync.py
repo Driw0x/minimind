@@ -15,7 +15,7 @@ from torch import optim, nn
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
-from dataset.lm_dataset import SFTDataset
+from dataset.lm_dataset import PretrainDataset
 from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
 
 warnings.filterwarnings('ignore')
@@ -26,11 +26,14 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
     last_step = start_step
     executed_steps = 0
     max_steps_reached = False
+    last_grad_norm = None
+
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
         last_step = step
         executed_steps += 1
+
         lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
@@ -40,20 +43,16 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
 
-        if directml_fp16:
-            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
-
         backward_loss(
             loss,
             scaler,
             args.device,
             args.dtype,
-            args.directml_loss_scale,
-            # master_params=master_params
+            args.directml_loss_scale
         )
 
         if step % args.accumulation_steps == 0:
-            optimizer_step(
+            last_grad_norm = optimizer_step(
                 model,
                 optimizer,
                 scaler,
@@ -61,13 +60,65 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
                 args.device,
                 args.dtype,
                 args.directml_loss_scale,
+                check_finite=False,
                 master_params=master_params
             )
 
-        if step % args.log_interval == 0 or step == iters:
+        # If the epoch ends in the middle of an accumulation window, the
+        # losses of the remaining micro-batches were divided by the full
+        # accumulation factor. Rescale their accumulated gradients so the
+        # final update is the mean over the actual number of micro-batches,
+        # then apply that update BEFORE the epoch-end checkpoint is saved.
+        if step == iters and step % args.accumulation_steps != 0:
+            partial_steps = step % args.accumulation_steps
+            partial_correction = args.accumulation_steps / partial_steps
+
+            with torch.no_grad():
+                for parameter in model.parameters():
+                    if parameter.grad is not None:
+                        parameter.grad.mul_(partial_correction)
+
+            last_grad_norm = optimizer_step(
+                model,
+                optimizer,
+                scaler,
+                args.grad_clip,
+                args.device,
+                args.dtype,
+                args.directml_loss_scale,
+                check_finite=False,
+                master_params=master_params
+            )
+
+        should_log = step % args.log_interval == 0 or step == iters
+
+        if should_log:
             spend_time = time.time() - start_time
-            current_loss = loss.item() * args.accumulation_steps
-            current_aux_loss = res.aux_loss.item() if res.aux_loss is not None else 0.0
+
+            # Limit DirectML -> CPU synchronization to log points.
+            if directml_fp16:
+                loss_value = check_finite_loss(
+                    loss,
+                    context=f"epoch {epoch + 1}, step {step}"
+                )
+            else:
+                loss_value = loss.detach().float().cpu().item()
+
+            current_loss = loss_value * args.accumulation_steps
+            current_aux_loss = (
+                res.aux_loss.detach().float().cpu().item()
+                if res.aux_loss is not None
+                else 0.0
+            )
+
+            if directml_fp16 and last_grad_norm is not None:
+                grad_norm_value = last_grad_norm.detach().float().cpu().item()
+                if not torch.isfinite(torch.tensor(grad_norm_value)).item():
+                    raise RuntimeError(
+                        f"Non-finite gradient norm detected "
+                        f"(epoch {epoch + 1}, step {step}): {grad_norm_value}"
+                    )
+
             current_logits_loss = current_loss - current_aux_loss
             current_lr = optimizer.param_groups[-1]['lr']
             eta_min = spend_time / max(step - start_step, 1) * (iters - step) // 60
@@ -81,13 +132,26 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
-            torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
+            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
+
             checkpoint_kwargs = {}
+
             if master_params is not None:
                 checkpoint_kwargs['master_weights'] = export_fp32_master_weights(master_params)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler,
-                         **checkpoint_kwargs)
+
+            lm_checkpoint(
+                lm_config,
+                weight=args.save_weight,
+                model=model,
+                optimizer=optimizer,
+                scaler=scaler,
+                epoch=epoch,
+                step=step,
+                wandb=wandb,
+                save_dir='../checkpoints',
+                **checkpoint_kwargs
+            )
+
             model.train()
             del state_dict
 
@@ -97,7 +161,23 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             max_steps_reached = True
             break
 
-    if last_step > start_step and last_step % args.accumulation_steps != 0:
+    # A bounded run can stop before the end of the epoch. Flush any
+    # remaining accumulated gradients with the same partial-window
+    # correction. The true epoch-end case is already handled above so that
+    # its checkpoint includes the final optimizer update.
+    if (
+        last_step > start_step
+        and last_step < iters
+        and last_step % args.accumulation_steps != 0
+    ):
+        partial_steps = last_step % args.accumulation_steps
+        partial_correction = args.accumulation_steps / partial_steps
+
+        with torch.no_grad():
+            for parameter in model.parameters():
+                if parameter.grad is not None:
+                    parameter.grad.mul_(partial_correction)
+
         optimizer_step(
             model,
             optimizer,
@@ -106,39 +186,40 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=
             args.device,
             args.dtype,
             args.directml_loss_scale,
+            check_finite=False,
             master_params=master_params
         )
 
-
     return executed_steps, max_steps_reached
 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="MiniMind Full SFT")
+    parser = argparse.ArgumentParser(description="MiniMind Pretraining")
     parser.add_argument("--save_dir", type=str, default="../out", help="模型保存目录")
-    parser.add_argument('--save_weight', default='full_sft', type=str, help="保存权重的前缀名")
+    parser.add_argument('--save_weight', default='pretrain', type=str, help="保存权重的前缀名")
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
-    parser.add_argument("--batch_size", type=int, default=16, help="batch size")
-    parser.add_argument("--learning_rate", type=float, default=1e-5, help="初始学习率")
+    parser.add_argument("--batch_size", type=int, default=32, help="batch size")
+    parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
     parser.add_argument("--device", type=str, default="auto", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
-    parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
+    parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
     parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
     parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
-    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
-    parser.add_argument('--max_seq_len', default=768, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
+    parser.add_argument('--max_seq_len', default=340, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument("--data_path", type=str, default="../dataset/sft_t2t_mini.jsonl", help="训练数据路径")
-    parser.add_argument('--from_weight', default='pretrain', type=str, help="基于哪个权重训练，为none则不基于任何权重训练")
+    parser.add_argument("--data_path", type=str, default="../dataset/pretrain_t2t_mini.jsonl", help="预训练数据路径")
+    parser.add_argument('--from_weight', default='none', type=str, help="基于哪个权重训练，为none则从头开始")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
     parser.add_argument("--use_wandb", action="store_true", help="是否使用wandb")
-    parser.add_argument("--wandb_project", type=str, default="MiniMind-Full-SFT", help="wandb项目名")
+    parser.add_argument("--wandb_project", type=str, default="MiniMind-Pretrain", help="wandb项目名")
     parser.add_argument("--use_compile", default=0, type=int, choices=[0, 1], help="是否使用torch.compile加速（0=否，1=是）")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
@@ -154,9 +235,15 @@ if __name__ == "__main__":
     
     # ========== 3. 设置混合精度 ==========
     device_type = args.device.type
-    dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
+    dtype_map = {
+        "float16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32
+    }
+    dtype = dtype_map[args.dtype]
     directml_fp16 = is_directml_fp16(args.device, args.dtype)
-    autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
+
+    autocast_ctx = (torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" and dtype != torch.float32 else nullcontext())
     
     # ========== 4. 配wandb ==========
     wandb = None
@@ -164,39 +251,49 @@ if __name__ == "__main__":
         import swanlab as wandb
         wandb_id = ckp_data.get('wandb_id') if ckp_data else None
         resume = 'must' if wandb_id else None
-        wandb_run_name = f"MiniMind-Full-SFT-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
+        wandb_run_name = f"MiniMind-Pretrain-Epoch-{args.epochs}-BatchSize-{args.batch_size}-LearningRate-{args.learning_rate}"
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
     # ========== 5. 定义模型、数据、优化器 ==========
     model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
-    train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+
+    if directml_fp16:
+        Logger(
+            f'DirectML FP16 enabled: '
+            f'loss_scale={args.directml_loss_scale}, '
+            f'FP32 master weights enabled'
+        )
+
+    train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = create_grad_scaler(args.device, args.dtype)
+
     master_params = create_fp32_master_params(model) if directml_fp16 else None
+
     optimizer = optim.AdamW(
         master_params if master_params is not None else model.parameters(),
         lr=args.learning_rate,
-        eps=1e-8 if master_params is not None else get_adamw_epsilon(
-            args.device,
-            args.dtype,
-            args.directml_adam_eps
-        )
+        eps=1e-8 if master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
     )
     
     # ========== 6. 从ckp恢复状态 ==========
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
+
         if master_params is not None:
             if 'master_weights' not in ckp_data:
                 raise RuntimeError(
                     "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
                     "Start a new run with --from_resume 0."
                 )
+
             load_fp32_master_weights(master_params, ckp_data['master_weights'])
             sync_master_to_model(model, master_params)
+
         optimizer.load_state_dict(ckp_data['optimizer'])
         scaler.load_state_dict(ckp_data['scaler'])
+
         if master_params is None:
             configure_optimizer_for_directml_fp16(
                 optimizer,
@@ -204,6 +301,7 @@ if __name__ == "__main__":
                 args.dtype,
                 args.directml_adam_eps
             )
+
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
@@ -232,11 +330,25 @@ if __name__ == "__main__":
             else 0
         )
 
-        if skip > 0:
+        if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, remaining_steps)
+            executed_steps, max_steps_reached = train_epoch(
+                epoch,
+                loader,
+                len(loader) + skip,
+                start_step,
+                wandb,
+                remaining_steps
+            )
         else:
-            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader), 0, wandb, remaining_steps)
+            executed_steps, max_steps_reached = train_epoch(
+                epoch,
+                loader,
+                len(loader),
+                0,
+                wandb,
+                remaining_steps
+            )
 
         total_run_steps += executed_steps
 

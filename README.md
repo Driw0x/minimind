@@ -70,6 +70,11 @@ from four dataset regions without recurrence of the historical
 self-copying collapse. Dense pretraining is complete; Full SFT is the
 next full-training stage.
 
+A separate 1000-step performance comparison showed that limiting
+diagnostic DirectML-to-CPU synchronization to logging boundaries reduced
+Dense pretraining runtime by approximately `3.65%` (`1.038×` speedup).
+Checkpoint-quality validation of this Log-Sync variant is still pending.
+
 See the [project roadmap](docs/roadmap.md) for the complete development
 plan.
 
@@ -252,8 +257,8 @@ maintained separately in `docs/`.
     work.
 -   [Development tools](docs/development-tools.md) --- DirectML audit,
     deterministic test fixture generation, sequential training with
-    `train_all.ps1`, real-training benchmarking, bounded runs, and the
-    Python cross-trainer smoke runner.
+    `train_all.ps1`, real-training and Log-Sync benchmarking, bounded
+    runs, and the Python cross-trainer smoke runner.
 -   [Training commands](docs/training_commands.md) --- per-trainer
     training configurations, periodic checkpoints, and resume commands.
 

@@ -502,7 +502,9 @@ the DirectML FP16 trainers.
 DirectML FP16 training must not use the default AdamW epsilon without
 validation.
 
-The validated project default for the DirectML FP16 path is `1e-4`.
+The validated epsilon for the historical direct-FP16 optimizer path is
+`1e-4`. The retained Dense FP32-master optimizer path uses AdamW
+`eps = 1e-8`.
 
 ------------------------------------------------------------------------
 
@@ -832,3 +834,165 @@ independent reference on the same logits.
 
 The `reduction="none"` → FP32 valid-token mean implementation is the
 retained DirectML loss path.
+------------------------------------------------------------------------
+
+# DirectML BF16 Tensor Execution Is Unsupported in the Current Stack
+
+## Problem
+
+An upstream-like DirectML pretraining experiment attempted to use
+`bfloat16` model tensors directly.
+
+The run failed before the first training step with:
+
+``` text
+Invalid or unsupported data type BFloat16
+```
+
+from the DirectML backend path.
+
+## Cause
+
+The tested PyTorch / `torch-directml` / `PrivateUse1` execution stack
+does not accept the requested BF16 tensor type for this workload.
+
+This result establishes a limitation of the current software stack. It
+does not by itself prove that the physical GPU hardware is incapable of
+BF16 arithmetic.
+
+The experiment also differs from the upstream CUDA mixed-precision path:
+upstream keeps model parameters in FP32 and uses BF16 autocast for
+compatible compute operations, whereas the DirectML experiment had to
+request BF16 tensors directly because an equivalent validated DirectML
+autocast path is not available.
+
+## Solution
+
+DirectML BF16 is not used for the current MiniMind training path.
+
+The retained mixed-precision strategy remains:
+
+``` text
+FP16 model compute
+        ↓
+FP32 master weights
+        ↓
+FP32 AdamW update
+        ↓
+FP32 master → FP16 model synchronization
+```
+
+## Decision
+
+Do not treat DirectML BF16 as a usable replacement for CUDA BF16
+autocast in the current environment.
+
+------------------------------------------------------------------------
+
+# Fast Direct FP16 Optimizer Re-Test
+
+## Problem
+
+To reduce the overhead of FP32 master weights, Dense pretraining was
+re-tested with an experimental fast path using AdamW directly on FP16
+model parameters.
+
+The live training loss remained finite and decreased, but checkpoint
+diagnostics showed poor learning followed by rapidly increasing
+self-repetition.
+
+Results on samples `0–255` were:
+
+``` text
+Step 1000:
+loss   = 9.2573
+Top-1  = 0.31%
+repeat = 0.29%
+
+Step 2000:
+loss   = 8.3102
+Top-1  = 0.92%
+repeat = 1.20%
+
+Step 5000:
+loss   = 7.3196
+Top-1  = 1.80%
+repeat = 39.24%
+```
+
+The true-data repeat rate remained approximately `0.29%`.
+
+## Cause
+
+The experimental path removed FP32 master parameters and applied AdamW
+updates directly to FP16 parameters.
+
+The results reinforce the earlier finding that static loss scaling can
+protect the backward signal without providing sufficient precision for
+reliable long-run FP16 parameter updates.
+
+## Solution
+
+The fast direct-FP16 optimizer path is not retained.
+
+Dense DirectML pretraining continues to use FP16 model compute with FP32
+master weights and FP32 AdamW updates.
+
+## Decision
+
+A decreasing training loss is not sufficient to validate direct FP16
+optimization.
+
+FP32 master weights remain required for the retained Dense DirectML FP16
+pretraining architecture.
+
+------------------------------------------------------------------------
+
+# Diagnostic CPU Synchronization Limited to Logging Intervals
+
+## Problem
+
+The stable FP16 + FP32-master trainer still performed diagnostic
+DirectML-to-CPU synchronization more often than required for the actual
+optimizer update.
+
+Examples included:
+
+``` text
+finite-loss read on every batch
+gradient-norm scalar read on optimizer updates
+```
+
+These scalar reads force the CPU to wait for asynchronous DirectML work.
+
+## Solution
+
+An optimized trainer variant keeps the complete FP32-master optimization
+path unchanged but disables per-step scalar materialization for
+diagnostic checks.
+
+Loss and the latest gradient norm are transferred to the CPU and checked
+only when:
+
+``` text
+step % log_interval == 0
+```
+
+or at the final logging point.
+
+Gradient clipping itself still executes on every optimizer update, and
+FP32 master weights are still synchronized back to the FP16 model after
+every optimizer step.
+
+## Decision
+
+Diagnostic CPU synchronization should follow `log_interval` rather than
+the optimizer cadence when possible.
+
+A `1000`-step benchmark confirmed a throughput improvement from
+`2.0038 s/step` to `1.9307 s/step`, corresponding to a `1.038×` speedup
+and `3.65%` lower total runtime.
+
+The throughput impact is validated for the tested configuration.
+Checkpoint-quality validation remains required before the optimized
+trainer is treated as the final training reference.

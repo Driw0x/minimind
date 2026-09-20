@@ -664,12 +664,9 @@ For full training, `train_all.ps1` uses the trainer-specific target
 values documented in [`training_commands.md`](training_commands.md).
 The DirectML MoE stages keep a conservative physical batch size.
 
-Long training stages also refresh their latest resume checkpoint every
-100 iterations with:
-
-``` text
---save_interval 100
-```
+Long training stages refresh their latest resume checkpoint according to
+trainer-specific `--save_interval` values documented in
+[`training_commands.md`](training_commands.md).
 
 An interrupted stage can be continued from that checkpoint with:
 
@@ -812,4 +809,123 @@ historical repeated-token collapse.
 
 The completed epoch-2 checkpoint is retained as the final Dense
 pretraining base for Full SFT.
+------------------------------------------------------------------------
 
+## CUDA Mixed Precision and DirectML Use Different Mechanisms
+
+The upstream CUDA pretraining path keeps model parameters in FP32 while
+using BF16 autocast for compatible compute operations.
+
+Conceptually:
+
+``` text
+Upstream CUDA:
+FP32 model parameters
+        ↓
+BF16 autocast compute
+        ↓
+AdamW on FP32 parameters
+```
+
+The current DirectML stack does not provide an equivalent validated BF16
+autocast path. A direct BF16 tensor experiment failed with
+`Invalid or unsupported data type BFloat16`.
+
+The retained DirectML approximation is therefore:
+
+``` text
+DirectML:
+FP16 model compute
+        ↓
+FP32 master parameters
+        ↓
+AdamW FP32 update
+        ↓
+copy FP32 master → FP16 model
+```
+
+### Lesson
+
+FP32 master weights are not an arbitrary extra copy. They provide the
+FP32 optimizer state/parameter precision that CUDA obtains naturally by
+keeping the real model parameters in FP32 while autocasting compute.
+
+------------------------------------------------------------------------
+
+## Fast Direct FP16 Re-Test Confirms Master Weights Are Required
+
+A new upstream-like DirectML experiment removed FP32 master weights and
+applied AdamW directly to FP16 model parameters.
+
+Checkpoint diagnostics on samples `0–255` evolved as follows:
+
+``` text
+step 1000 → loss 9.2573, Top-1 0.31%, repeat 0.29%
+step 2000 → loss 8.3102, Top-1 0.92%, repeat 1.20%
+step 5000 → loss 7.3196, Top-1 1.80%, repeat 39.24%
+```
+
+The true-data repeat rate remained approximately `0.29%`.
+
+The decreasing loss therefore hid a strong degradation in prediction
+behavior. This is consistent with the earlier long-run evidence that
+direct FP16 AdamW updates are not reliable for sustained DirectML
+pretraining.
+
+### Decision
+
+The retained Dense DirectML precision path remains:
+
+``` text
+FP16 forward / backward
+        ↓
+FP32 gradient conversion and unscale
+        ↓
+FP32 gradient clipping
+        ↓
+AdamW on FP32 master weights
+        ↓
+FP32 master → FP16 model synchronization
+```
+
+Performance work must preserve this architecture unless a future
+alternative is independently validated with checkpoint diagnostics.
+
+------------------------------------------------------------------------
+
+## Limit Diagnostic CPU Synchronization to Logging Intervals
+
+FP32 master weights and master-to-model synchronization are part of the
+required optimizer path and remain on the DirectML device.
+
+By contrast, scalar diagnostic reads such as:
+
+``` text
+loss.cpu().item()
+grad_norm.cpu().item()
+```
+
+are not required for every training step and force synchronization
+between asynchronous DirectML execution and the CPU.
+
+An optimized trainer variant therefore performs these diagnostic reads
+only at `log_interval` boundaries while keeping gradient clipping and
+FP32-master updates unchanged on every optimizer step.
+
+### Decision
+
+Use `log_interval` as the normal cadence for CPU-side finite-value
+checks and scalar logging.
+
+A `1000`-step comparison measured:
+
+``` text
+Stable trainer:     2003.79 s total, 2.0038 s / step
+Log-Sync trainer:   1930.75 s total, 1.9307 s / step
+Speedup:             1.038×
+Time reduction:      3.65%
+```
+
+The throughput benefit is therefore validated for the tested
+configuration. Checkpoint-quality validation is still required before the
+log-synchronized trainer becomes the final reference.

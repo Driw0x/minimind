@@ -132,7 +132,7 @@ Real-data stability testing produced:
  8 × 340 → PASS for 100 bounded steps
 ```
 
-The current reference configuration is:
+The historical M4 reference configuration was:
 
 ``` text
 batch_size = 8
@@ -224,8 +224,9 @@ On the tested DirectML backend,
 `F.cross_entropy(..., ignore_index=-100, reduction="mean")` does not
 normalize padded causal-LM batches over valid tokens as expected.
 
-MiniMind therefore computes the summed cross-entropy and divides
-explicitly by the number of non-ignored target tokens.
+MiniMind therefore computes per-token cross-entropy with
+`reduction="none"` and performs the mean in FP32 over valid non-padding
+tokens.
 
 This workaround preserves correct token-level loss normalization during
 DirectML training.
