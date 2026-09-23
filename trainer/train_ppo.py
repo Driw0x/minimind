@@ -20,7 +20,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import RLAIFDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel
 from trainer.rollout_engine import create_rollout_engine
 
 warnings.filterwarnings('ignore')
@@ -36,7 +36,7 @@ def rep_penalty(text, n=3, cap=0.5):
 class CriticModel(MiniMindForCausalLM):
     def __init__(self, params):
         super().__init__(params)
-        # 替换lm_head为输出单一价值的线性层
+        # lm_head 不参与 forward，仅靠 tie_word_embeddings 与 embed_tokens 共享权重，解绑后 DDP 会报未使用参数
         self.value_head = nn.Linear(params.hidden_size, 1)
 
     def forward(self, input_ids=None, attention_mask=None, **kwargs):
@@ -75,16 +75,12 @@ def calculate_rewards(prompts, responses, reward_model):
     return rewards
 
 
-def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step=0, wandb=None, remaining_steps=0):
+def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step=0, wandb=None):
     actor_model.train()
     critic_model.train()
     grad_accum_step = 0
-    executed_steps = 0
-    max_steps_reached = False
 
     for step, batch in enumerate(loader, start=start_step + 1):
-        last_step = step
-        executed_steps += 1
         prompts = batch["prompt"]  # list[str], length B
         enc = tokenizer(prompts, return_tensors="pt", padding=True, truncation=True, max_length=args.max_seq_len,
                         padding_side="left").to(args.device)  # input_ids: [B, P], attention_mask: [B, P]
@@ -124,6 +120,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         resp_idx = torch.arange(resp_labels.size(1), device=gen_out.device).unsqueeze(0)
         logp_pos = prompt_lens.unsqueeze(1) - 1 + resp_idx
         resp_pad_mask = rollout_result.completion_mask.to(args.device).bool()
+        full_mask.scatter_(1, logp_pos + 1, resp_pad_mask.to(full_mask.dtype))
         resp_lengths = resp_pad_mask.sum(dim=1); valid_resp = resp_lengths > 0; eos_mask = resp_labels.eq(tokenizer.eos_token_id) & resp_pad_mask
         has_eos = eos_mask.any(dim=1); eos_pos = torch.argmax(eos_mask.int(), dim=1)
         resp_lengths = torch.where(has_eos, eos_pos + 1, resp_lengths).long().clamp(min=1)
@@ -162,8 +159,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         clipfrac_sum = 0.0
         aux_loss_sum = 0.0
         log_count = 0
-        actor_unwrapped = actor_model.module if isinstance(actor_model, DistributedDataParallel) else actor_model
-        critic_unwrapped = critic_model.module if isinstance(critic_model, DistributedDataParallel) else critic_model
         for ppo_epoch in range(args.ppo_update_iters):
             if stop_ppo:
                 break
@@ -171,14 +166,12 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             for i in range(0, B, mb_size):
                 inds = b_inds[i:i + mb_size]
                 
-                mb_values_seq = critic_unwrapped(input_ids=gen_out[inds], attention_mask=full_mask[inds])
+                mb_values_seq = critic_model(input_ids=gen_out[inds], attention_mask=full_mask[inds])
                 mb_resp_values = mb_values_seq.gather(1, logp_pos[inds])
 
                 with autocast_ctx:
-                    res = actor_unwrapped(input_ids=gen_out[inds], attention_mask=full_mask[inds])
+                    res = actor_model(input_ids=gen_out[inds], attention_mask=full_mask[inds])
                     aux_loss = res.aux_loss if lm_config.use_moe else torch.tensor(0.0, device=args.device)
-                    # 在 autocast 内计算 log_softmax，避免直接对 fp16/bf16 logits
-                    # 计算造成额外数值偏差。
                     mb_resp_logp = F.log_softmax(res.logits[:, :-1], dim=-1).gather(2, labels[inds].unsqueeze(-1)).squeeze(-1).gather(1, logp_pos[inds])
 
                 log_ratio = mb_resp_logp - old_resp_logp[inds]
@@ -194,7 +187,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                                f"ratio_max={torch.exp(_lrv).max().item():.6f} "
                                f"ratio_min={torch.exp(_lrv).min().item():.6f} "
                                f"dropout={getattr(lm_config, 'dropout', None)} "
-                               f"training={actor_unwrapped.training}")
+                               f"training={actor_model.training}")
                 approx_kl = (0.5 * (log_ratio ** 2) * resp_policy_mask[inds]).sum() / resp_policy_mask[inds].sum().clamp(min=1)
                 
                 # 同步各卡的 approx_kl，防止某卡 break 而其它卡继续导致 DDP 死锁
@@ -228,16 +221,7 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 else:
                     loss = (policy_loss + args.vf_coef * value_loss + aux_loss) / args.accumulation_steps
                 
-                if directml_fp16:
-                    check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
-
-                backward_loss(
-                    loss,
-                    scaler,
-                    args.device,
-                    args.dtype,
-                    args.directml_loss_scale
-                )
+                loss.backward()
 
                 policy_loss_sum += policy_loss.item()
                 value_loss_sum += value_loss.item()
@@ -250,60 +234,24 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
                 grad_accum_step += 1
 
                 if grad_accum_step % args.accumulation_steps == 0:
-                    if directml_fp16:
-                        optimizer_step(
-                            actor_model, actor_optimizer, scaler,
-                            args.grad_clip if args.grad_clip > 0 else float("inf"),
-                            args.device, args.dtype, args.directml_loss_scale,
-                            master_params=actor_master_params
-                        )
-                        optimizer_step(
-                            critic_model, critic_optimizer, scaler,
-                            args.grad_clip if args.grad_clip > 0 else float("inf"),
-                            args.device, args.dtype, args.directml_loss_scale,
-                            master_params=critic_master_params
-                        )
-                    else:
-                        scaler.unscale_(actor_optimizer)
-                        scaler.unscale_(critic_optimizer)
-                        clip_grad_norm_(actor_model.parameters(), args.grad_clip)
-                        clip_grad_norm_(critic_model.parameters(), args.grad_clip)
-                        scaler.step(actor_optimizer)
-                        scaler.step(critic_optimizer)
-                        scaler.update()
-                        actor_optimizer.zero_grad(set_to_none=True)
-                        critic_optimizer.zero_grad(set_to_none=True)
-
+                    clip_grad_norm_(actor_model.parameters(), args.grad_clip)
+                    clip_grad_norm_(critic_model.parameters(), args.grad_clip)
+                    actor_optimizer.step()
+                    critic_optimizer.step()
                     actor_scheduler.step()
                     critic_scheduler.step()
+                    actor_optimizer.zero_grad()
+                    critic_optimizer.zero_grad()
 
         if grad_accum_step % args.accumulation_steps != 0:
-            if directml_fp16:
-                optimizer_step(
-                    actor_model, actor_optimizer, scaler,
-                    args.grad_clip if args.grad_clip > 0 else float("inf"),
-                    args.device, args.dtype, args.directml_loss_scale,
-                    master_params=actor_master_params
-                )
-                optimizer_step(
-                    critic_model, critic_optimizer, scaler,
-                    args.grad_clip if args.grad_clip > 0 else float("inf"),
-                    args.device, args.dtype, args.directml_loss_scale,
-                    master_params=critic_master_params
-                )
-            else:
-                scaler.unscale_(actor_optimizer)
-                scaler.unscale_(critic_optimizer)
-                clip_grad_norm_(actor_model.parameters(), args.grad_clip)
-                clip_grad_norm_(critic_model.parameters(), args.grad_clip)
-                scaler.step(actor_optimizer)
-                scaler.step(critic_optimizer)
-                scaler.update()
-                actor_optimizer.zero_grad(set_to_none=True)
-                critic_optimizer.zero_grad(set_to_none=True)
-
+            clip_grad_norm_(actor_model.parameters(), args.grad_clip)
+            clip_grad_norm_(critic_model.parameters(), args.grad_clip)
+            actor_optimizer.step()
+            critic_optimizer.step()
             actor_scheduler.step()
             critic_scheduler.step()
+            actor_optimizer.zero_grad()
+            critic_optimizer.zero_grad()
         
         if step % args.save_interval == 0 or step == iters: rollout_engine.update_policy(actor_model)
 
@@ -340,18 +288,13 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
             raw_actor = actor_model.module if isinstance(actor_model, DistributedDataParallel) else actor_model
             raw_actor = getattr(raw_actor, '_orig_mod', raw_actor)
             actor_state = raw_actor.state_dict()
-            torch.save({k: v.detach().cpu().half() for k, v in actor_state.items()}, ckp)
+            torch.save({k: v.half().cpu() for k, v in actor_state.items()}, ckp)
             
             # 使用 lm_checkpoint 保存完整状态（包括 critic）
-            checkpoint_kwargs = {}
-            if actor_master_params is not None:
-                checkpoint_kwargs['master_weights'] = export_fp32_master_weights(actor_master_params)
-                checkpoint_kwargs['critic_master_weights'] = export_fp32_master_weights(critic_master_params)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer,
+            lm_checkpoint(lm_config, weight=args.save_weight, model=actor_model, optimizer=actor_optimizer, 
                          epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints',
-                         scheduler=actor_scheduler, scaler=scaler, critic_model=critic_model,
-                         critic_optimizer=critic_optimizer, critic_scheduler=critic_scheduler,
-                         **checkpoint_kwargs)
+                         scheduler=actor_scheduler, critic_model=critic_model, 
+                         critic_optimizer=critic_optimizer, critic_scheduler=critic_scheduler)
             actor_model.train()
             del actor_state
 
@@ -359,12 +302,6 @@ def ppo_train_epoch(epoch, loader, iters, rollout_engine, ref_model, actor_sched
         del labels, resp_labels, resp_idx, resp_pad_mask, valid_resp, eos_mask, has_eos, eos_pos, resp_lengths, resp_policy_mask, resp_value_mask, old_resp_logp, ref_resp_logp
         del kl, kl_ref, policy_loss, value_loss, loss, token_rewards, returns, old_resp_values, prompt_lens, logp_pos
 
-        if remaining_steps > 0 and executed_steps >= remaining_steps:
-            max_steps_reached = True
-            break
-
-
-    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind PPO (Proximal Policy Optimization)")
@@ -374,14 +311,11 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=2, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=3e-7, help="Actor学习率")
     parser.add_argument("--critic_learning_rate", type=float, default=5e-7, help="Critic学习率")
-    parser.add_argument("--device", type=str, default="auto", help="训练设备")
+    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
-    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
-    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
@@ -416,9 +350,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
-    args.device = get_device(args.device)
-    local_rank = init_distributed_mode(args.device)
-    if dist.is_initialized(): args.device = get_device(f"cuda:{local_rank}")
+    local_rank = init_distributed_mode()
+    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
@@ -427,10 +360,9 @@ if __name__ == "__main__":
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
-    device_type = args.device.type
+    device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    directml_fp16 = is_directml_fp16(args.device, args.dtype)
-    autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
     
     # ========== 4. 配wandb ==========
     wandb = None
@@ -444,16 +376,16 @@ if __name__ == "__main__":
     # ========== 5. 初始化模型和数据 ==========
     base_weight = args.from_weight
     # Actor模型
-    actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
-    ref_model, _ = init_model(lm_config, base_weight, device=args.device, dtype=args.dtype)
+    actor_model, tokenizer = init_model(lm_config, base_weight, device=args.device)
+    ref_model, _ = init_model(lm_config, base_weight, device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
     moe_suffix = '_moe' if lm_config.use_moe else ''
     ckp = f'{args.save_dir}/{base_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-    state_dict = torch.load(ckp, map_location='cpu')
+    state_dict = torch.load(ckp, map_location=args.device)
     critic_model = CriticModel(lm_config)
     critic_model.load_state_dict(state_dict, strict=False)
-    critic_model = prepare_model_precision(critic_model, args.device, args.dtype)
-    reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float32 if is_directml_device(args.device) else torch.float16)
+    critic_model = critic_model.to(args.device)
+    reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
     # Rollout引擎
     rollout_engine = create_rollout_engine(
         engine_type=args.rollout_engine,
@@ -467,19 +399,8 @@ if __name__ == "__main__":
     )
     train_ds = RLAIFDataset(args.data_path, tokenizer, max_length=(args.max_seq_len + args.max_gen_len), thinking_ratio=args.thinking_ratio)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = create_grad_scaler(args.device, args.dtype)
-    actor_master_params = create_fp32_master_params(actor_model) if directml_fp16 else None
-    critic_master_params = create_fp32_master_params(critic_model) if directml_fp16 else None
-    actor_optimizer = optim.AdamW(
-        actor_master_params if actor_master_params is not None else actor_model.parameters(),
-        lr=args.learning_rate,
-        eps=1e-8 if actor_master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
-    )
-    critic_optimizer = optim.AdamW(
-        critic_master_params if critic_master_params is not None else critic_model.parameters(),
-        lr=args.critic_learning_rate,
-        eps=1e-8 if critic_master_params is not None else get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
-    )
+    actor_optimizer = optim.AdamW(actor_model.parameters(), lr=args.learning_rate)
+    critic_optimizer = optim.AdamW(critic_model.parameters(), lr=args.critic_learning_rate)
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler)
     iters = len(loader_for_count)
     mb_factor = max(1, math.ceil(args.batch_size / args.mini_batch_size))
@@ -491,27 +412,8 @@ if __name__ == "__main__":
     if ckp_data:
         actor_model.load_state_dict(ckp_data['model'])
         critic_model.load_state_dict(ckp_data['critic_model'])
-        if actor_master_params is not None:
-            if 'master_weights' not in ckp_data or 'critic_master_weights' not in ckp_data:
-                raise RuntimeError(
-                    "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
-                    "Start a new run with --from_resume 0."
-                )
-            load_fp32_master_weights(actor_master_params, ckp_data['master_weights'])
-            load_fp32_master_weights(critic_master_params, ckp_data['critic_master_weights'])
-            sync_master_to_model(actor_model, actor_master_params)
-            sync_master_to_model(critic_model, critic_master_params)
         actor_optimizer.load_state_dict(ckp_data['optimizer'])
         critic_optimizer.load_state_dict(ckp_data['critic_optimizer'])
-        if actor_master_params is None:
-            configure_optimizer_for_directml_fp16(
-                actor_optimizer, args.device, args.dtype, args.directml_adam_eps
-            )
-            configure_optimizer_for_directml_fp16(
-                critic_optimizer, args.device, args.dtype, args.directml_adam_eps
-            )
-        if ckp_data.get('scaler') is not None:
-            scaler.load_state_dict(ckp_data['scaler'])
         actor_scheduler.load_state_dict(ckp_data['scheduler'])
         critic_scheduler.load_state_dict(ckp_data['critic_scheduler'])
         start_epoch = ckp_data['epoch']
@@ -519,44 +421,27 @@ if __name__ == "__main__":
     
     # ========== 7. 编译和分布式包装 ==========
     if args.use_compile == 1:
-        if is_directml_device(args.device):
-            raise RuntimeError("torch.compile is not currently supported with DirectML.")
         actor_model = torch.compile(actor_model)
         Logger('torch.compile enabled')
-        rollout_engine.update_policy(actor_model)
     if dist.is_initialized():
-        actor_model = DistributedDataParallel(actor_model, device_ids=[local_rank])
-        critic_model = DistributedDataParallel(critic_model, device_ids=[local_rank])
+        # freqs_cos/freqs_sin 各 rank 由 config 确定性算出，默认每步广播一次纯属浪费
+        actor_model = DistributedDataParallel(actor_model, device_ids=[local_rank], broadcast_buffers=False)
+        critic_model = DistributedDataParallel(critic_model, device_ids=[local_rank], broadcast_buffers=False)
     rollout_engine.update_policy(actor_model)
     
     # ========== 8. 开始训练 ==========
-    total_run_steps = 0
-
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
-        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"))
-
-        remaining_steps = (
-            args.max_steps - total_run_steps
-            if args.max_steps > 0
-            else 0
-        )
-
-        if skip > 0:
+        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
+        if skip > 0: 
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            executed_steps, max_steps_reached = ppo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step, wandb, remaining_steps)
+            ppo_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, start_step, wandb)
         else:
-            executed_steps, max_steps_reached = ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb, remaining_steps)
-
-        total_run_steps += executed_steps
-
-        if max_steps_reached:
-            Logger(f'Maximum training steps reached: {total_run_steps}')
-            break
-
+            ppo_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, actor_scheduler, critic_scheduler, reward_model, 0, wandb)
+    
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():
         dist.barrier()

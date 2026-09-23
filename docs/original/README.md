@@ -1,6 +1,6 @@
 <div align="center">
 
-![logo](./images/logo.png)
+![logo](../../images/logo.png)
 
 </div>
 
@@ -45,7 +45,7 @@
 
 <div align="center">
 
-![minimind-3](./images/minimind-3.gif)
+![minimind-3](../../images/minimind-3.gif)
 
 [🔗 在线体验](https://www.modelscope.cn/studios/gongjy/MiniMind) | [🔗 视频介绍](https://www.bilibili.com/video/BV12dHPeqE72)
 
@@ -55,12 +55,12 @@
     <tr>
       <td align="center">
         <a href="https://huggingface.co/collections/jingyaogong/minimind" style="text-decoration: none;">
-          <img src="./images/with_huggingface.png" alt="Hugging Face Logo" style="vertical-align: middle; width: auto; max-width: 100%;" />
+          <img src="../../images/with_huggingface.png" alt="Hugging Face Logo" style="vertical-align: middle; width: auto; max-width: 100%;" />
         </a>
       </td>
       <td align="center">
         <a href="https://www.modelscope.cn/profile/gongjy" style="text-decoration: none;">
-          <img src="./images/with_modelscope.png" alt="ModelScope Logo" style="vertical-align: middle; width: auto; max-width: 100%;" />
+          <img src="../../images/with_modelscope.png" alt="ModelScope Logo" style="vertical-align: middle; width: auto; max-width: 100%;" />
         </a>
       </td>
     </tr>
@@ -532,7 +532,7 @@ MiniMind训练数据集下载地址： [ModelScope](https://www.modelscope.cn/da
 </details>
 
 
-![dataset](./images/dataset.jpg)
+![dataset](../../images/dataset.jpg)
 
 > MiniMind 主线训练数据组成与推荐组合示意图
 
@@ -567,8 +567,8 @@ MiniMind训练数据集下载地址： [ModelScope](https://www.modelscope.cn/da
 
 `minimind-3` 系列结构如下图：
 
-![structure](./images/LLM-structure.jpg)
-![structure-moe](./images/LLM-structure-moe.jpg)
+![structure](../../images/LLM-structure.jpg)
+![structure-moe](../../images/LLM-structure-moe.jpg)
 
 修改模型配置见[./model/model_minimind.py](./model/model_minimind.py)，参考模型参数版本见下表：
 
@@ -603,7 +603,7 @@ MobileLLM 的一个核心观察是：在参数量固定时，深度往往比宽�
 相对地，当 `d_model > 1536` 时，继续增加层数往往比单纯继续加宽更划算，更容易带来更高的参数-效果收益。
 
 作为参考，GPT-3 的参数设定如下：
-![gpt3_config.png](./images/gpt3_config.png)
+![gpt3_config.png](../../images/gpt3_config.png)
 
 </details>
 
@@ -684,7 +684,7 @@ python train_pretrain.py
 
 > 训练后的模型权重文件默认每隔`save_interval步`保存为:`pretrain_*.pth`（*为模型具体dimension，每次保存时新文件会覆盖旧文件）
 
-![pretrain_loss](./images/pretrain_loss.jpg)
+![pretrain_loss](../../images/pretrain_loss.jpg)
 > `768dim` 配置在预训练阶段的 loss 曲线
 
 ```bash
@@ -714,7 +714,7 @@ python train_full_sft.py
 
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `full_sft_*.pth`（*为模型具体dimension，每次保存时新文件会覆盖旧文件）
 
-![sft_loss](./images/sft_loss.jpg)
+![sft_loss](../../images/sft_loss.jpg)
 > `768dim` 配置在 SFT 阶段的 loss 曲线
 
 ```bash
@@ -1113,7 +1113,7 @@ python train_ppo.py
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `ppo_actor_*.pth`（*为模型具体dimension）
 
 
-![ppo_loss](./images/ppo_loss.jpg)
+![ppo_loss](../../images/ppo_loss.jpg)
 
 > MiniMind 在 PPO 训练阶段的优化走势
 
@@ -1149,7 +1149,7 @@ python train_grpo.py
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `grpo_*.pth`
 
 
-![grpo_loss](./images/grpo_loss.jpg)
+![grpo_loss](../../images/grpo_loss.jpg)
 
 > MiniMind 在 GRPO 训练阶段的优化走势
 
@@ -1221,13 +1221,13 @@ python train_agent.py --rollout_engine sglang --sglang_base_url http://localhost
 
 > 训练后的模型权重文件默认每隔`save_interval步`保存为: `agent_*.pth`
 
-![agent_rl_loss](./images/agent_rl_loss.jpg)
+![agent_rl_loss](../../images/agent_rl_loss.jpg)
 
 > MiniMind 在 Agentic RL 训练阶段的优化走势
 
 这里顺带提一下 `rollout_engine`。所谓“训推分离”，就是把 **参数更新** 和 **轨迹展开** 拆开：训练侧负责优化 policy，rollout 侧负责高吞吐采样，对上统一表现为“给我 prompt，我返回 rollout 结果；训练完以后，再把新权重同步回来”。因此训练脚本并不需要关心底层到底是本地 `generate` 还是远端 `inference` 引擎。需要说明的是，当前实现仍是**同步**模式（采样完一批再更新），还不是纯 rollout buffer 的异步训练。
 
-![rl-structure](./images/rl-structure.jpg)
+![rl-structure](../../images/rl-structure.jpg)
 
 > MiniMind 中训练侧、轨迹侧与 rollout 侧解耦的 RL 结构示意图
 
@@ -1260,7 +1260,7 @@ python eval_toolcall.py --weight agent
 🧠: 生成的1到1000的随机数是71，根据计算结果，71的平方等于5041。
 ```
 
-![agent_webui](./images/agent_webui.jpg)
+![agent_webui](../../images/agent_webui.jpg)
 
 > 基于AgentRL训练结果测试，支持思考展示、工具选择与多轮 Tool Use 交互
 
@@ -1555,7 +1555,7 @@ python eval_llm.py --weight full_sft --inference_rope_scaling
 下面以 MiniMind 为例，使用不同长度的《西游记》白话文本作为输入，对比启用 RoPE scaling 前后的困惑度（PPL）变化。可以看到，在长文本场景下，启用 YaRN 外推后模型的 PPL 明显下降：
 
 <div align="center">
-<img src="./images/rope_ppl.png">
+<img src="../../images/rope_ppl.png">
 </div>
 
 > MiniMind 在不同文本长度下启用 YaRN 前后的 PPL 对比
@@ -1610,7 +1610,7 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 </details>
 
-![benchmark_radar](./images/benchmark_radar.jpg)
+![benchmark_radar](../../images/benchmark_radar.jpg)
 
 # 📌 其他
 

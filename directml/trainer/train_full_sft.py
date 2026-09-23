@@ -16,16 +16,21 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from model.model_minimind import MiniMindConfig
 from dataset.lm_dataset import SFTDataset
-from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler
+from trainer.trainer_utils import get_lr, Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, init_model, SkipBatchSampler, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16, create_fp32_master_params, sync_master_to_model, export_fp32_master_weights, load_fp32_master_weights
 
 warnings.filterwarnings('ignore')
 
 
-def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
+def train_epoch(epoch, loader, iters, start_step=0, wandb=None, remaining_steps=0):
     start_time = time.time()
+    last_step = start_step
+    executed_steps = 0
+    max_steps_reached = False
     for step, (input_ids, labels) in enumerate(loader, start=start_step + 1):
         input_ids = input_ids.to(args.device)
         labels = labels.to(args.device)
+        last_step = step
+        executed_steps += 1
         lr = get_lr(epoch * iters + step, args.epochs * iters, args.learning_rate)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
@@ -35,16 +40,29 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             loss = res.loss + res.aux_loss
             loss = loss / args.accumulation_steps
 
-        scaler.scale(loss).backward()
+        if directml_fp16:
+            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
 
-        if step % args.accumulation_steps == 0 or step == iters:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+        backward_loss(
+            loss,
+            scaler,
+            args.device,
+            args.dtype,
+            args.directml_loss_scale,
+            # master_params=master_params
+        )
 
-            scaler.step(optimizer)
-            scaler.update()
-
-            optimizer.zero_grad(set_to_none=True)
+        if step % args.accumulation_steps == 0:
+            optimizer_step(
+                model,
+                optimizer,
+                scaler,
+                args.grad_clip,
+                args.device,
+                args.dtype,
+                args.directml_loss_scale,
+                master_params=master_params
+            )
 
         if step % args.log_interval == 0 or step == iters:
             spend_time = time.time() - start_time
@@ -63,14 +81,36 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
-            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
-            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer, 
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler)
+            torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
+            checkpoint_kwargs = {}
+            if master_params is not None:
+                checkpoint_kwargs['master_weights'] = export_fp32_master_weights(master_params)
+            lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scaler=scaler,
+                         **checkpoint_kwargs)
             model.train()
             del state_dict
 
         del input_ids, labels, res, loss
 
+        if remaining_steps > 0 and executed_steps >= remaining_steps:
+            max_steps_reached = True
+            break
+
+    if last_step > start_step and last_step % args.accumulation_steps != 0:
+        optimizer_step(
+            model,
+            optimizer,
+            scaler,
+            args.grad_clip,
+            args.device,
+            args.dtype,
+            args.directml_loss_scale,
+            master_params=master_params
+        )
+
+
+    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Full SFT")
@@ -79,18 +119,20 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=2, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=16, help="batch size")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="初始学习率")
-    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
+    parser.add_argument("--device", type=str, default="auto", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
+    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
+    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
+    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=8, type=int, help="隐藏层数量")
     parser.add_argument('--max_seq_len', default=768, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
-    parser.add_argument('--seed', default=42, type=int, help="随机种子（DDP下每个rank为seed+rank，每轮为seed+epoch）")
     parser.add_argument("--data_path", type=str, default="../dataset/sft_t2t_mini.jsonl", help="训练数据路径")
     parser.add_argument('--from_weight', default='pretrain', type=str, help="基于哪个权重训练，为none则不基于任何权重训练")
     parser.add_argument('--from_resume', default=0, type=int, choices=[0, 1], help="是否自动检测&续训（0=否，1=是）")
@@ -100,9 +142,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
-    local_rank = init_distributed_mode()
-    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
-    setup_seed(args.seed + (dist.get_rank() if dist.is_initialized() else 0))
+    args.device = get_device(args.device)
+    local_rank = init_distributed_mode(args.device)
+    if dist.is_initialized(): args.device = get_device(f"cuda:{local_rank}")
+    setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
     # ========== 2. 配置目录、模型参数、检查ckp ==========
     os.makedirs(args.save_dir, exist_ok=True)
@@ -110,9 +153,10 @@ if __name__ == "__main__":
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume==1 else None
     
     # ========== 3. 设置混合精度 ==========
-    device_type = "cuda" if "cuda" in args.device else "cpu"
+    device_type = args.device.type
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
+    directml_fp16 = is_directml_fp16(args.device, args.dtype)
+    autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
     
     # ========== 4. 配wandb ==========
     wandb = None
@@ -124,40 +168,81 @@ if __name__ == "__main__":
         wandb.init(project=args.wandb_project, name=wandb_run_name, id=wandb_id, resume=resume)
     
     # ========== 5. 定义模型、数据、优化器 ==========
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
     train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = torch.cuda.amp.GradScaler(enabled=(args.dtype == 'float16'))
-    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    scaler = create_grad_scaler(args.device, args.dtype)
+    master_params = create_fp32_master_params(model) if directml_fp16 else None
+    optimizer = optim.AdamW(
+        master_params if master_params is not None else model.parameters(),
+        lr=args.learning_rate,
+        eps=1e-8 if master_params is not None else get_adamw_epsilon(
+            args.device,
+            args.dtype,
+            args.directml_adam_eps
+        )
+    )
     
     # ========== 6. 从ckp恢复状态 ==========
     start_epoch, start_step = 0, 0
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
+        if master_params is not None:
+            if 'master_weights' not in ckp_data:
+                raise RuntimeError(
+                    "DirectML FP16 resume checkpoint does not contain FP32 master weights. "
+                    "Start a new run with --from_resume 0."
+                )
+            load_fp32_master_weights(master_params, ckp_data['master_weights'])
+            sync_master_to_model(model, master_params)
         optimizer.load_state_dict(ckp_data['optimizer'])
         scaler.load_state_dict(ckp_data['scaler'])
+        if master_params is None:
+            configure_optimizer_for_directml_fp16(
+                optimizer,
+                args.device,
+                args.dtype,
+                args.directml_adam_eps
+            )
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
     
     # ========== 7. 编译和分布式包装 ==========
     if args.use_compile == 1:
+        if is_directml_device(args.device):
+            raise RuntimeError("torch.compile is not currently supported with DirectML.")
         model = torch.compile(model)
         Logger('torch.compile enabled')
     if dist.is_initialized():
         model = DistributedDataParallel(model, device_ids=[local_rank])
     
     # ========== 8. 开始训练 ==========
+    total_run_steps = 0
+
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
-        setup_seed(args.seed + epoch); indices = torch.randperm(len(train_ds)).tolist()
+        setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
-        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
-        if skip > 0: 
+        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"))
+
+        remaining_steps = (
+            args.max_steps - total_run_steps
+            if args.max_steps > 0
+            else 0
+        )
+
+        if skip > 0:
             Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, len(loader) + skip, start_step, wandb)
+            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader) + skip, start_step, wandb, remaining_steps)
         else:
-            train_epoch(epoch, loader, len(loader), 0, wandb)
+            executed_steps, max_steps_reached = train_epoch(epoch, loader, len(loader), 0, wandb, remaining_steps)
+
+        total_run_steps += executed_steps
+
+        if max_steps_reached:
+            Logger(f'Maximum training steps reached: {total_run_steps}')
+            break
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized():

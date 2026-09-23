@@ -1,0 +1,989 @@
+# MiniMind --- Project Memory
+
+> **Project direction update — 2026-09-21**
+>
+> The DirectML work is now retained as a compatibility and feasibility study,
+> not as the active MiniMind training backend. The upstream official
+> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
+> DirectML, while the locally trained DirectML checkpoints remained incoherent
+> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
+> diagnostics. This isolates the unresolved problem to the custom DirectML
+> training path rather than the tokenizer, dataset, checkpoint loader, or
+> DirectML inference path.
+>
+> Because acceptable pretraining quality could not be obtained reliably with
+> DirectML, the DirectML training track is **abandoned for this project**.
+> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
+> commands, and validation results below are preserved as historical technical
+> evidence unless explicitly stated otherwise.
+
+This document provides a concise technical memory of the MiniMind DirectML
+adaptation and the final decision to stop using DirectML for training and move
+to ROCm.
+
+It records the main architectural decisions, technical lessons, and
+validation references that should remain useful throughout the project.
+
+Detailed technical issues are documented in
+[`directml_issues.md`](directml_issues.md).
+
+Benchmark results and performance experiments are documented in
+[`directml_benchmarks.md`](directml_benchmarks.md).
+
+Current limitations and fallbacks are documented in
+[`directml_limitations.md`](directml_limitations.md).
+
+Development progress is tracked separately in
+[`update_log.md`](update_log.md).
+
+------------------------------------------------------------------------
+
+# Architecture Decisions
+
+## Keep DirectML Changes Close to Upstream
+
+DirectML support should modify as little of the original MiniMind
+training logic as possible.
+
+The existing MiniMind execution pipeline should be reused whenever
+possible:
+
+``` text
+Model
+  ↓
+Standard PyTorch operations
+  ↓
+Resolved execution device
+  ↓
+CPU / CUDA / DirectML
+```
+
+DirectML-specific copies of existing training pipelines should be
+avoided.
+
+### Decision
+
+Shared compatibility utilities are preferred over separate DirectML
+implementations.
+
+------------------------------------------------------------------------
+
+## Separate Backend Compatibility From Training Logic
+
+Training algorithms should remain backend-independent whenever possible.
+
+Backend-specific responsibilities include:
+
+-   device resolution;
+-   DirectML initialization;
+-   model placement;
+-   component-specific device requirements;
+-   backend compatibility rules.
+
+These responsibilities belong in shared trainer infrastructure rather
+than individual training algorithms.
+
+### Decision
+
+Individual trainers should focus on their training algorithm.
+
+Backend compatibility should be centralized in shared trainer utilities.
+
+------------------------------------------------------------------------
+
+## Allow Component-Specific Device Placement
+
+Not every component of a training workflow must execute on the same
+device.
+
+Some models or operations may require CPU execution when DirectML does
+not support their complete inference path.
+
+The current alignment-training configuration may therefore use:
+
+``` text
+Trainable model → DirectML
+Reward model    → CPU
+```
+
+Data is transferred between devices when required.
+
+### Decision
+
+Correctness and stability take priority over forcing every component
+onto DirectML.
+
+------------------------------------------------------------------------
+
+## Preserve MiniMind Checkpoint Semantics
+
+DirectML is an execution backend and must not introduce a separate
+checkpoint format.
+
+Checkpoint compatibility depends on factors such as:
+
+``` text
+Model architecture
+Training stage
+State dictionary structure
+```
+
+and not on whether the model was executed using CPU, CUDA, or DirectML.
+
+### Decision
+
+Existing MiniMind checkpoint semantics must remain unchanged.
+
+Backend compatibility and checkpoint compatibility should be validated
+independently.
+
+------------------------------------------------------------------------
+
+# Important Technical Lessons
+
+## DirectML Device Representation
+
+`torch-directml` integrates DirectML through PyTorch's `PrivateUse1`
+backend.
+
+A DirectML device therefore appears internally as:
+
+    privateuseone:<index>
+
+The adapter index is preserved between the user-facing DirectML device
+and PyTorch's internal representation.
+
+For example:
+
+    directml:0 → privateuseone:0
+    directml:1 → privateuseone:1
+
+This is expected behavior.
+
+The user-facing MiniMind device options remain:
+
+    directml
+    directml:<index>
+
+### Lesson
+
+Do not treat `privateuseone` as a separate device backend.
+
+It is PyTorch's internal representation of the DirectML device selected
+through `torch-directml`.
+
+When multiple GPUs are available, the device index is significant and
+should be preserved when documenting or comparing runs.
+
+------------------------------------------------------------------------
+
+## CPU Fallbacks Are Acceptable When Necessary
+
+DirectML does not support every PyTorch operation used by MiniMind and
+its dependencies.
+
+Some unsupported operations can automatically fall back to CPU.
+
+Other components may need to remain explicitly on CPU.
+
+Examples currently include:
+
+``` text
+AdamW unsupported operation → automatic CPU fallback
+Reward model                → CPU execution
+```
+
+### Lesson
+
+A CPU fallback is not automatically a compatibility failure.
+
+Fallbacks are acceptable when correctness is preserved, but their
+performance impact must be evaluated separately.
+
+Current fallbacks are tracked in
+[`directml_limitations.md`](directml_limitations.md).
+
+------------------------------------------------------------------------
+
+## Physical GPU Selection Must Be Explicit
+
+The development machine exposes multiple graphics adapters, including an
+integrated GPU and a dedicated GPU.
+
+Both may be visible to DirectML.
+
+Therefore:
+
+``` text
+CPU
+ ≠
+Integrated GPU
+ ≠
+Dedicated GPU
+```
+
+Implicit DirectML device selection can make benchmark results difficult
+to interpret because separate runs may execute on different physical
+GPUs.
+
+### Lesson
+
+The intended physical DirectML adapter should be explicitly selected
+before training or benchmarking.
+
+Reference performance measurements must only be compared when they use
+the same physical GPU.
+
+------------------------------------------------------------------------
+
+## Benchmark Compatibility Is Not Full-Training Stability
+
+Short compatibility benchmarks are useful for identifying configurations
+that fail immediately.
+
+However:
+
+``` text
+Benchmark PASS
+    ≠
+Guaranteed full-training stability
+```
+
+A full training run executes for much longer and may encounter different
+memory, performance, or backend conditions.
+
+### Lesson
+
+Benchmark results should be treated as compatibility indicators rather
+than performance recommendations.
+
+Final training configurations must be validated with actual real-data
+training runs.
+
+Real pretraining confirmed that a configuration can execute successfully
+on DirectML while still being impractical for full-scale training
+because of performance or memory constraints.
+
+DirectML validation should therefore use bounded real-data training runs
+with `--max_steps` when full-dataset execution is not practical.
+
+Detailed performance measurements belong in
+[`directml_benchmarks.md`](directml_benchmarks.md).
+
+------------------------------------------------------------------------
+
+## Training Measurement Can Introduce Major Synchronization Overhead
+
+Initial real-training measurements reported approximately:
+
+``` text
+5.280 s / iteration
+1.52 samples / second
+304.81 effective tokens / second
+```
+
+This initially suggested an estimated pretraining duration of
+approximately:
+
+``` text
+9.70 days / epoch
+```
+
+M4 performance investigation showed that the measurement path itself
+introduced significant synchronization overhead between DirectML and the
+CPU.
+
+After removing unnecessary synchronization from the critical training
+and measurement path, the same `8 × 340` reference workload with
+gradient accumulation `8` completed a new 100-step benchmark with:
+
+``` text
+Average iteration time:      0.482 s
+Samples / second:            16.61
+Effective tokens / second:   3341.37
+Padded tokens / second:      5647.46
+Estimated epoch duration:    21.24 h
+Estimated epoch duration:    0.89 days
+```
+
+The iteration-time improvement was approximately 10.95× without reducing
+the model architecture, physical batch size, sequence length, or
+gradient accumulation configuration.
+
+### Lesson
+
+Performance instrumentation can significantly distort DirectML
+measurements when it forces device-to-CPU synchronization inside the
+critical training loop.
+
+Performance investigations should isolate:
+
+``` text
+Model computation
+        +
+Required synchronization
+        +
+Optimizer overhead
+        +
+Logging / measurement overhead
+```
+
+before attributing unexpectedly poor runtime to the DirectML backend
+itself.
+
+Reference performance numbers should only be retained after the
+measurement path has been validated not to introduce significant
+synchronization overhead.
+
+------------------------------------------------------------------------
+
+# Regression Configuration
+
+A lightweight MiniMind model is used for fast DirectML compatibility
+validation:
+
+``` text
+hidden_size = 128
+num_hidden_layers = 2
+```
+
+This configuration has been used to validate the complete workflow:
+
+``` text
+Training
+   ↓
+Checkpoint
+   ↓
+Checkpoint loading
+   ↓
+Evaluation
+   ↓
+Text generation
+```
+
+### Decision
+
+The `128 / 2-layer` configuration is retained as a lightweight DirectML
+regression configuration.
+
+It is intended for compatibility validation rather than representative
+model performance testing.
+
+------------------------------------------------------------------------
+
+# Validation Principles
+
+## Test Backend Compatibility Independently
+
+DirectML execution should be validated independently from unrelated
+model or checkpoint problems.
+
+A failure should not automatically be attributed to DirectML.
+
+Relevant checks include:
+
+``` text
+Device placement
+Model architecture
+Checkpoint compatibility
+Dataset validity
+Backend operation support
+```
+
+------------------------------------------------------------------------
+
+## Prefer Real Training Validation
+
+Synthetic and short-running tests are useful for development and
+regression testing.
+
+They do not replace real training validation.
+
+The validation strategy therefore combines:
+
+``` text
+Unit tests
+    +
+Smoke tests
+    +
+Compatibility benchmarks
+    +
+Real training runs
+```
+
+Each layer answers a different compatibility question.
+
+------------------------------------------------------------------------
+
+# Documentation Responsibilities
+
+Project documentation is intentionally separated by purpose:
+
+``` text
+roadmap.md
+    → planned milestones and remaining work
+
+update_log.md
+    → chronological development history
+
+project_memory.md
+    → durable architectural decisions and lessons
+
+directml_issues.md
+    → problems, causes, solutions, and decisions
+
+directml_limitations.md
+    → current unsupported operations and fallbacks
+
+directml_benchmarks.md
+    → experimental compatibility and performance results
+
+development-tools.md
+    → development and validation utilities
+
+directml_audit.md
+    → automatically generated compatibility audit
+```
+
+This separation should be preserved as the project evolves.
+
+# M4 Final Decisions
+
+## DirectML FP16 Requires Explicit Numerical Handling
+
+The final M4 training path uses DirectML FP16 with:
+
+``` text
+Static loss scale = 1024
+AdamW epsilon     = 1e-4
+```
+
+The default AdamW epsilon `1e-8` produced non-finite training
+immediately after the first optimizer update. Gradient inspection showed
+finite gradients before the optimizer step, so the failure was isolated
+to the update path.
+
+### Lesson
+
+DirectML FP16 optimizer settings must be validated independently from
+CUDA mixed-precision assumptions.
+
+Static loss scaling and a DirectML-safe AdamW epsilon are centralized in
+shared trainer utilities rather than duplicated in each training
+algorithm.
+
+------------------------------------------------------------------------
+
+## Sustained Validation Is Required After the First Optimizer Step
+
+A bounded compatibility run must cross an optimizer-update boundary to
+provide useful FP16 validation.
+
+The final compatibility matrix therefore used a 9-step bounded run with
+gradient accumulation `8`.
+
+For practical viability, this was supplemented by a `1000`-step real
+pretraining run.
+
+The sustained reference run completed successfully with:
+
+``` text
+batch_size = 8
+max_seq_len = 340
+accumulation_steps = 8
+dtype = float16
+loss_scale = 1024
+AdamW eps = 1e-4
+```
+
+### Lesson
+
+Validation should distinguish between:
+
+``` text
+Immediate execution
+        ↓
+First optimizer update
+        ↓
+Post-update execution
+        ↓
+Sustained training
+```
+
+Passing only the first stage is insufficient.
+
+------------------------------------------------------------------------
+
+## FP16 Improves Both Throughput and Memory Headroom
+
+The final FP16 reference benchmark measured approximately:
+
+``` text
+0.482 s / iteration
+16.61 samples / second
+3341.37 effective tokens / second
+```
+
+Final dedicated GPU memory monitoring measured a peak of approximately:
+
+``` text
+7,769.62 MB
+```
+
+compared with approximately `11,623.12 MB` in the earlier FP32
+measurement, a reduction of about `33.15%`.
+
+### Decision
+
+The practical DirectML baseline for the tested hardware is FP16 rather
+than FP32.
+
+------------------------------------------------------------------------
+
+## Use One Explicit Cross-Trainer Smoke Runner
+
+The main DirectML FP16 trainers use bounded `--max_steps` execution and
+can be validated sequentially through:
+
+``` text
+tests/test_all_trainers.py
+```
+
+The final M4 smoke run passed for:
+
+``` text
+Pretrain
+Full SFT
+LoRA
+Distillation
+GRPO
+Agent RL
+PPO
+```
+
+DPO remains part of the previously validated pipeline but is not
+included in this specific M4 FP16 smoke-runner result.
+
+### Decision
+
+Heavy DirectML trainer smoke validation is run explicitly with Python
+and kept separate from the normal lightweight `pytest -q` workflow.
+
+------------------------------------------------------------------------
+
+## M4 Practical Viability Conclusion — Superseded
+
+At the end of M4, the tested MiniMind DirectML configuration was considered
+practically viable from the perspective of execution, throughput, memory, and
+smoke-test coverage. Later full-training model-quality validation superseded
+that conclusion.
+
+This conclusion is based on the combination of corrected throughput,
+reduced FP16 memory usage, sustained 1000-step stability, and successful
+cross-trainer smoke validation.
+
+The historical M4 conclusion was specific to the validated hardware and
+configuration. It must not be interpreted as evidence that the final DirectML
+training path produced an acceptable model.
+
+
+------------------------------------------------------------------------
+
+## DirectML MoE Requires a Compatibility Routing Path
+
+The upstream sparse MoE path relies on routing operations that trigger
+unsupported scatter behavior on the tested DirectML backend.
+
+The retained architecture is:
+
+``` text
+CPU / CUDA → original sparse MoE routing
+DirectML   → scatter-free compatibility routing
+```
+
+The DirectML path computes all experts and combines them through the
+selected routing weights.
+
+### Lesson
+
+Backend compatibility may require a localized implementation fallback
+when an upstream sparse operation is not supported.
+
+The fallback should remain isolated to DirectML so that upstream CPU and
+CUDA behavior is preserved.
+
+------------------------------------------------------------------------
+
+## Agent RL Requires Windows and FP16-Specific Compatibility Handling
+
+Windows DataLoader workers require the Agent `collate_fn` to be defined
+at module scope.
+
+DirectML FP16 validation also showed that rollout behavior can remain
+finite while masked full-sequence policy/reference recomputation becomes
+non-finite.
+
+For the validated right-padded Agent batches, the problematic
+full-sequence attention mask is omitted during policy/reference
+recomputation, while numerically sensitive log-probability and RL ratio
+calculations use FP32.
+
+### Lesson
+
+Generation-time stability does not guarantee that full-sequence
+recomputation follows an equally stable backend path.
+
+The two paths should be validated independently.
+
+------------------------------------------------------------------------
+
+## Final Cross-Trainer M4 Validation
+
+The final explicit DirectML smoke runner completed:
+
+``` text
+All trainer smoke tests passed
+Passed: 9/9
+```
+
+The runner covers:
+
+``` text
+Dense Pretrain
+Dense Full SFT
+MoE Pretrain
+MoE Full SFT
+LoRA
+Distillation
+GRPO
+Agent RL
+PPO
+```
+
+DPO remains previously validated but outside this specific runner.
+
+### Decision
+
+The `9/9` result is the final M4 cross-trainer smoke reference.
+
+------------------------------------------------------------------------
+
+# M5 Training Execution
+
+The full sequential workflow keeps the upstream trainer configurations
+separate from the sustained DirectML validation baseline.
+
+The M4 validated pretraining baseline remains:
+
+``` text
+batch_size = 8
+max_seq_len = 340
+accumulation_steps = 8
+```
+
+For full training, `train_all.ps1` uses the trainer-specific target
+values documented in [`training_commands.md`](training_commands.md).
+The DirectML MoE stages keep a conservative physical batch size.
+
+Long training stages refresh their latest resume checkpoint according to
+trainer-specific `--save_interval` values documented in
+[`training_commands.md`](training_commands.md).
+
+An interrupted stage can be continued from that checkpoint with:
+
+``` text
+--from_resume 1
+```
+
+### Decision
+
+Upstream trainer defaults must not be presented as sustained DirectML
+validation results. Periodic resume checkpoints are retained for long
+training runs.
+
+------------------------------------------------------------------------
+
+## Dense DirectML Pretraining Uses FP32 Master Weights
+
+Long-run checkpoint diagnostics showed that the earlier pure-FP16
+DirectML optimizer path could remain finite while producing a degenerate
+self-copying model.
+
+Dense pretraining now keeps FP16 model compute but performs optimizer
+updates through FP32 master weights:
+
+``` text
+FP16 compute
+    ↓
+FP32 gradient unscale
+    ↓
+AdamW FP32 update
+    ↓
+Copy master weights back to FP16 model
+```
+
+A later DirectML cross-entropy investigation showed that the default
+mean reduction with `ignore_index=-100` incorrectly normalized padded
+batches. The first explicit `reduction="sum" / valid_tokens` workaround
+was then shown to be incorrect as well on the tested DirectML FP16 path.
+
+The retained implementation computes `reduction="none"` per-token loss
+and performs the valid-token mean in FP32. On the batch-32 reference
+test, model loss `6.30274916` matched the DirectML per-token calculation
+exactly and remained within approximately `0.003` of the CPU FP32
+reference `6.30530691`.
+
+Earlier step-100 and step-1000 runs remain useful FP32-master validation
+evidence, but they predate the final cross-entropy reduction fix.
+
+### Decision
+
+Finite losses are not sufficient evidence of correct long-run
+mixed-precision training.
+
+Dense DirectML pretraining keeps FP32 master weights in resume
+checkpoints so optimizer precision is preserved across interruptions.
+Old resume checkpoints without master weights must not be used with the
+new path.
+
+DirectML causal-LM loss must use per-token cross-entropy followed by
+FP32 averaging over valid non-padding tokens. Neither the backend's
+default mean reduction nor the tested FP16 `sum / valid_tokens`
+workaround is retained.
+
+
+
+------------------------------------------------------------------------
+
+## Intermediate Dense Pretraining Completed Epoch 1
+
+An intermediate Dense DirectML path was restarted from scratch using
+the upstream pretraining parameters, including physical
+`batch_size = 32`, FP32 master weights, and the initial
+`reduction="sum" / valid_tokens` loss workaround.
+
+The first complete epoch finished successfully.
+
+A checkpoint consistency test on the epoch-1 model confirmed:
+
+``` text
+Model loss:                  6.48799419
+Manual token loss:           6.48799419
+Difference:                  0.0000000000
+Samples 0–255 global loss:   6.1017
+Top-1 accuracy:              15.07%
+Top-1 repeat rate:            0.83%
+Mean entropy:                 5.3160
+```
+
+Compared with the corrected step-1000 checkpoint (`loss 6.7785`,
+Top-1 `6.76%`, repeat `0.76%`), the first full epoch shows substantial
+next-token accuracy improvement without a return of the historical
+self-copying collapse.
+
+A later reduction-specific test showed that this run still used an
+incorrect DirectML `reduction="sum" / valid_tokens` loss. Its checkpoint
+is therefore retained for investigation only and is not the final
+pretraining base.
+
+### Decision
+
+The final Dense pretraining quality reference must be produced from
+scratch with FP32 master weights and the retained
+`reduction="none"` → FP32 valid-token mean loss.
+
+The completed intermediate epoch still demonstrates that physical
+`batch_size = 32` is executable through a full epoch on the current
+memory path; older OOM observations remain historical results from an
+earlier training path.
+
+------------------------------------------------------------------------
+
+## Final DirectML Loss Path Completed Epoch 1
+
+The retained Dense DirectML pretraining path completed its first full
+epoch from scratch with FP16 model compute, FP32 master weights,
+per-token cross-entropy (`reduction="none"`), and FP32 valid-token
+averaging.
+
+Two independent 256-sample diagnostic regions produced train/manual
+losses of `6.0612 / 6.0637` and `6.0177 / 6.0201`, with Top-1 accuracy
+of `13.71%` and `13.80%`, repeat rates of `0.81%` and `0.71%`, and mean
+entropy of `5.3487` and `5.3436`.
+
+The model and independent token losses remained aligned within
+approximately `0.0025` after a complete epoch, and the historical
+self-copying collapse did not recur.
+
+### Decision
+
+The FP16 compute + FP32 master-weight + per-token FP32-valid-mean path is
+now the validated full-epoch Dense DirectML pretraining path.
+
+The same corrected run subsequently completed epoch 2. A broader
+4,096-sample evaluation across four dataset regions kept train/manual
+loss closely aligned, with Top-1 repeat rates between `0.56%` and
+`0.96%`. A qualitative generation check also showed no return of the
+historical repeated-token collapse.
+
+### Final decision
+
+The completed epoch-2 checkpoint is **not retained as the final Dense
+pretraining base for Full SFT**. Despite numerically reasonable diagnostics,
+qualitative generation remained incoherent. The DirectML training path is
+therefore abandoned and the next training work moves to ROCm.
+------------------------------------------------------------------------
+
+## CUDA Mixed Precision and DirectML Use Different Mechanisms
+
+The upstream CUDA pretraining path keeps model parameters in FP32 while
+using BF16 autocast for compatible compute operations.
+
+Conceptually:
+
+``` text
+Upstream CUDA:
+FP32 model parameters
+        ↓
+BF16 autocast compute
+        ↓
+AdamW on FP32 parameters
+```
+
+The current DirectML stack does not provide an equivalent validated BF16
+autocast path. A direct BF16 tensor experiment failed with
+`Invalid or unsupported data type BFloat16`.
+
+The retained DirectML approximation is therefore:
+
+``` text
+DirectML:
+FP16 model compute
+        ↓
+FP32 master parameters
+        ↓
+AdamW FP32 update
+        ↓
+copy FP32 master → FP16 model
+```
+
+### Lesson
+
+FP32 master weights are not an arbitrary extra copy. They provide the
+FP32 optimizer state/parameter precision that CUDA obtains naturally by
+keeping the real model parameters in FP32 while autocasting compute.
+
+------------------------------------------------------------------------
+
+## Fast Direct FP16 Re-Test Confirms Master Weights Are Required
+
+A new upstream-like DirectML experiment removed FP32 master weights and
+applied AdamW directly to FP16 model parameters.
+
+Checkpoint diagnostics on samples `0–255` evolved as follows:
+
+``` text
+step 1000 → loss 9.2573, Top-1 0.31%, repeat 0.29%
+step 2000 → loss 8.3102, Top-1 0.92%, repeat 1.20%
+step 5000 → loss 7.3196, Top-1 1.80%, repeat 39.24%
+```
+
+The true-data repeat rate remained approximately `0.29%`.
+
+The decreasing loss therefore hid a strong degradation in prediction
+behavior. This is consistent with the earlier long-run evidence that
+direct FP16 AdamW updates are not reliable for sustained DirectML
+pretraining.
+
+### Decision
+
+The retained Dense DirectML precision path remains:
+
+``` text
+FP16 forward / backward
+        ↓
+FP32 gradient conversion and unscale
+        ↓
+FP32 gradient clipping
+        ↓
+AdamW on FP32 master weights
+        ↓
+FP32 master → FP16 model synchronization
+```
+
+Performance work must preserve this architecture unless a future
+alternative is independently validated with checkpoint diagnostics.
+
+------------------------------------------------------------------------
+
+## Limit Diagnostic CPU Synchronization to Logging Intervals
+
+FP32 master weights and master-to-model synchronization are part of the
+required optimizer path and remain on the DirectML device.
+
+By contrast, scalar diagnostic reads such as:
+
+``` text
+loss.cpu().item()
+grad_norm.cpu().item()
+```
+
+are not required for every training step and force synchronization
+between asynchronous DirectML execution and the CPU.
+
+An optimized trainer variant therefore performs these diagnostic reads
+only at `log_interval` boundaries while keeping gradient clipping and
+FP32-master updates unchanged on every optimizer step.
+
+### Decision
+
+Use `log_interval` as the normal cadence for CPU-side finite-value
+checks and scalar logging.
+
+A `1000`-step comparison measured:
+
+``` text
+Stable trainer:     2003.79 s total, 2.0038 s / step
+Log-Sync trainer:   1930.75 s total, 1.9307 s / step
+Speedup:             1.038×
+Time reduction:      3.65%
+```
+
+The throughput benefit is therefore validated for the tested
+configuration. Checkpoint-quality validation is still required before the
+log-synchronized trainer becomes the final reference.
+
+------------------------------------------------------------------------
+
+# Current Backend Decision — 2026-09-21
+
+The decisive comparison is now model quality:
+
+``` text
+Official pretrain_768.pth
+    CPU       -> coherent generation
+    DirectML  -> coherent generation
+
+Local DirectML training
+    epoch 1   -> incoherent generation
+    epoch 2   -> incoherent generation
+```
+
+Tokenizer and dataset checks were clean, and the official checkpoint works
+through the same evaluation path. The project therefore attributes the remaining
+failure to the custom DirectML training path rather than to inference or data
+loading.
+
+### Final decision
+
+- Stop using DirectML as the MiniMind training backend.
+- Preserve the DirectML implementation, benchmarks, tests, and issue history as
+  a completed feasibility study.
+- Do not use the local DirectML epoch-1/epoch-2 checkpoints as the base for the
+  production SFT pipeline.
+- Continue MiniMind training work with **ROCm**.
+
+ROCm is expected to restore a more standard mixed-precision training model for
+the target AMD GPU, with FP32 parameters/optimizer precision and accelerated
+lower-precision compute, avoiding the custom DirectML precision workarounds that
+became necessary during this investigation.

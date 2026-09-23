@@ -125,10 +125,14 @@ class Attention(nn.Module):
         if self.flash and (seq_len > 1) and (not self.is_causal or past_key_value is None) and (attention_mask is None or torch.all(attention_mask == 1)):
             output = F.scaled_dot_product_attention(xq, xk, xv, dropout_p=self.dropout if self.training else 0.0, is_causal=self.is_causal)
         else:
-            scores = (xq @ xk.transpose(-2, -1)).float() / math.sqrt(self.head_dim)
+            scores = (xq @ xk.transpose(-2, -1)) / math.sqrt(self.head_dim)
             if self.is_causal: scores[:, :, :, -seq_len:] += torch.full((seq_len, seq_len), float("-inf"), device=scores.device).triu(1)
-            if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
-            output = self.attn_dropout(F.softmax(scores, dim=-1).type_as(xq)) @ xv
+            # if attention_mask is not None: scores += (1.0 - attention_mask.unsqueeze(1).unsqueeze(2)) * -1e9
+            if attention_mask is not None:
+                mask_value = torch.finfo(scores.dtype).min
+
+                scores = scores.masked_fill(attention_mask.unsqueeze(1).unsqueeze(2) == 0, mask_value,)
+            output = self.attn_dropout(F.softmax(scores.float(), dim=-1).type_as(xq)) @ xv
         output = output.transpose(1, 2).reshape(bsz, seq_len, -1)
         output = self.resid_dropout(self.o_proj(output))
         return output, past_kv
@@ -156,28 +160,119 @@ class MOEFeedForward(nn.Module):
     def forward(self, x):
         batch_size, seq_len, hidden_dim = x.shape
         x_flat = x.view(-1, hidden_dim)
+
         scores = F.softmax(self.gate(x_flat), dim=-1)
-        topk_weight, topk_idx = torch.topk(scores, k=self.config.num_experts_per_tok, dim=-1, sorted=False)
-        if self.config.norm_topk_prob:
-            if self.config.num_experts_per_tok > 1: 
-                topk_weight = topk_weight / (topk_weight.sum(dim=-1, keepdim=True) + 1e-20)
+
+        # --------------------------------------------------------
+        # DirectML-compatible MoE routing
+        #
+        # DirectML does not fully support the scatter operations
+        # used internally by topk/index_add backward.
+        #
+        # We therefore:
+        #   1. select experts from detached router scores,
+        #   2. rebuild differentiable routing weights with masks,
+        #   3. avoid indexed writes entirely.
+        #
+        # CPU/CUDA keep the original sparse implementation below.
+        # --------------------------------------------------------
+        if x.device.type == "privateuseone":
+            expert_ids = torch.arange(
+                self.config.num_experts,
+                device=x.device,
+            )
+
+            # Expert selection itself is non-differentiable anyway.
+            _, topk_idx = torch.topk(
+                scores.detach(),
+                k=self.config.num_experts_per_tok,
+                dim=-1,
+                sorted=False,
+            )
+
+            # [tokens, top_k, experts]
+            selected = (
+                topk_idx.unsqueeze(-1) == expert_ids
+            ).to(scores.dtype)
+
+            # [tokens, experts]
+            routing_mask = selected.sum(dim=1)
+
+            # Keep gradients through the selected router probabilities.
+            routing_weights = scores * routing_mask
+
+            if self.config.norm_topk_prob:
+                routing_weights = routing_weights / (
+                    routing_weights.sum(dim=-1, keepdim=True) + 1e-20
+                )
+
+            y = torch.zeros_like(x_flat)
+
+            # No boolean advanced indexing and no index_add_.
+            for i, expert in enumerate(self.experts):
+                expert_output = expert(x_flat)
+                weight = routing_weights[:, i:i + 1]
+
+                y = y + expert_output * weight
+
+            if self.training and self.config.router_aux_loss_coef > 0:
+                load = routing_mask.float().mean(0)
+
+                self.aux_loss = (
+                    load * scores.mean(0)
+                ).sum() * self.config.num_experts * self.config.router_aux_loss_coef
             else:
-                top1 = torch.topk(F.softmax(self.gate(x_flat.detach()), dim=-1), k=1, dim=-1, sorted=False)[0]
-                topk_weight = top1 - top1.detach() + 1.0 # k=1: 1.0 forward on purpose, gradient via straight-through
+                self.aux_loss = scores.new_zeros(1).squeeze()
+
+            return y.view(batch_size, seq_len, hidden_dim)
+
+        # --------------------------------------------------------
+        # Original sparse MoE path for CPU / CUDA
+        # --------------------------------------------------------
+        topk_weight, topk_idx = torch.topk(
+            scores,
+            k=self.config.num_experts_per_tok,
+            dim=-1,
+            sorted=False,
+        )
+
+        if self.config.norm_topk_prob:
+            topk_weight = topk_weight / (
+                topk_weight.sum(dim=-1, keepdim=True) + 1e-20
+            )
+
         y = torch.zeros_like(x_flat)
+
         for i, expert in enumerate(self.experts):
-            mask = (topk_idx == i)
+            mask = topk_idx == i
+
             if mask.any():
                 token_idx = mask.any(dim=-1).nonzero().flatten()
                 weight = topk_weight[mask].view(-1, 1)
-                y.index_add_(0, token_idx, (expert(x_flat[token_idx]) * weight).to(y.dtype))
+
+                y.index_add_(
+                    0,
+                    token_idx,
+                    (expert(x_flat[token_idx]) * weight).to(y.dtype),
+                )
+
             elif self.training:
-                y[0, 0] += 0 * sum(p.sum() for p in expert.parameters())
+                y[0, 0] += 0 * sum(
+                    p.sum() for p in expert.parameters()
+                )
+
         if self.training and self.config.router_aux_loss_coef > 0:
-            load = F.one_hot(topk_idx, self.config.num_experts).float().mean(0)
-            self.aux_loss = (load * scores.mean(0)).sum() * self.config.num_experts * self.config.router_aux_loss_coef
+            load = F.one_hot(
+                topk_idx,
+                self.config.num_experts,
+            ).float().mean(0)
+
+            self.aux_loss = (
+                load * scores.mean(0)
+            ).sum() * self.config.num_experts * self.config.router_aux_loss_coef
         else:
             self.aux_loss = scores.new_zeros(1).squeeze()
+
         return y.view(batch_size, seq_len, hidden_dim)
 
 class MiniMindBlock(nn.Module):
@@ -251,14 +346,36 @@ class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
         hidden_states, past_key_values, aux_loss = self.model(input_ids, attention_mask, past_key_values, use_cache, **kwargs)
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
+        # loss = None
+        # if labels is not None:
+        #     x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
+        #     loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
         loss = None
         if labels is not None:
             x, y = logits[..., :-1, :].contiguous(), labels[..., 1:].contiguous()
-            loss = F.cross_entropy(x.view(-1, x.size(-1)), y.view(-1), ignore_index=-100)
+            x, y = x.view(-1, x.size(-1)), y.view(-1)
+
+            if x.device.type == "privateuseone":
+                # DirectML workaround
+                token_loss = F.cross_entropy(
+                    x,
+                    y,
+                    ignore_index=-100,
+                    reduction="none"
+                )
+                valid = y != -100
+                loss = token_loss[valid].float().mean()
+            else:
+                # CPU / CUDA / ROCm = upstream
+                loss = F.cross_entropy(
+                    x,
+                    y,
+                    ignore_index=-100
+                )
         return MoeCausalLMOutputWithPast(loss=loss, aux_loss=aux_loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
     
     # https://github.com/jingyaogong/minimind/discussions/611
-    @torch.inference_mode()
+    @torch.no_grad()
     def generate(self, inputs=None, attention_mask=None, max_new_tokens=8192, temperature=0.85, top_p=0.85, top_k=50, eos_token_id=2, streamer=None, use_cache=True, num_return_sequences=1, do_sample=True, repetition_penalty=1.0, **kwargs):
         input_ids = kwargs.pop("input_ids", inputs).repeat(num_return_sequences, 1)
         attention_mask = attention_mask.repeat(num_return_sequences, 1) if attention_mask is not None else None

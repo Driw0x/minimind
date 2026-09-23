@@ -2,13 +2,16 @@ import random
 import re
 import json
 import os
+import sys
 from threading import Thread
 
 import torch
 import numpy as np
 import streamlit as st
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
-from trainer.trainer_utils import get_device, is_directml_device, setup_seed
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from trainer.trainer_utils import safe_math_eval
 
 st.set_page_config(page_title="MiniMind", initial_sidebar_state="collapsed")
 
@@ -68,7 +71,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-device = get_device("auto")
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # 多语言文本
 LANG_TEXTS = {
@@ -126,7 +129,7 @@ def execute_tool(tool_name, args):
     import datetime
     try:
         if tool_name == 'calculate_math':
-            return {"result": eval(args.get('expression', '0'))}
+            return {"result": safe_math_eval(args.get('expression', '0'))}
         elif tool_name == 'get_current_time':
             tz = args.get('timezone', 'Asia/Shanghai')
             return {"result": datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
@@ -206,8 +209,7 @@ def load_model_tokenizer(model_path):
         model_path,
         trust_remote_code=True
     )
-    model = model.eval().to(device)
-    if not is_directml_device(device): model = model.half()
+    model = model.half().eval().to(device)
     return model, tokenizer
 
 
@@ -300,6 +302,15 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
+def setup_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 def main():

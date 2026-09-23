@@ -10,7 +10,6 @@ import gc
 import json
 import math
 import random
-import signal
 import argparse
 import warnings
 import torch
@@ -24,7 +23,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from transformers import AutoTokenizer
 from model.model_minimind import MiniMindConfig, MiniMindForCausalLM
 from dataset.lm_dataset import AgentRLDataset
-from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, get_device, is_directml_device, is_directml_fp16, prepare_model_precision, create_grad_scaler, get_adamw_epsilon, backward_loss, optimizer_step, check_finite_loss, configure_optimizer_for_directml_fp16
+from trainer.trainer_utils import Logger, is_main_process, lm_checkpoint, init_distributed_mode, setup_seed, SkipBatchSampler, init_model, LMForRewardModel, safe_math_eval
 from trainer.rollout_engine import create_rollout_engine, compute_per_token_logps
 
 warnings.filterwarnings('ignore')
@@ -55,7 +54,7 @@ UNIT_DATA = {"km_miles": 0.621371, "miles_km": 1.60934, "kg_pounds": 2.20462, "p
 
 # ======== 模拟执行 ========
 MOCK_RESULTS = {
-    "calculate_math": lambda args: {"result": str(eval(str(args.get("expression", "0")).replace("^", "**").replace("×", "*").replace("÷", "/").replace("−", "-").replace("（", "(").replace("）", ")"), {"__builtins__": {}, "math": math}))},
+    "calculate_math": lambda args: {"result": str(safe_math_eval(args.get("expression", "0")))},
     "unit_converter": lambda args: {"result": round(float(args.get("value", 0)) * UNIT_DATA.get(f"{args.get('from_unit', '').lower()}_{args.get('to_unit', '').lower()}", 1), 4)},
     "get_current_weather": lambda args: (lambda w: {"city": args.get("location"), "temperature": w[0], "humidity": "65%", "condition": w[1]})(WEATHER_DATA.get(args.get("location"), ("22°C", "晴"))),
     "get_current_time": lambda args: {"datetime": TIME_DATA.get(args.get("timezone", "Asia/Shanghai"), "2025-03-07 14:30:00"), "timezone": args.get("timezone", "Asia/Shanghai")},
@@ -85,17 +84,12 @@ def execute_tool(name, args):
     fn = MOCK_RESULTS.get(name)
     if not fn: return None
     try:
-        signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError()))
-        signal.alarm(1)
         return fn(args)
-    except:
+    except Exception:
         return None
-    finally:
-        try: signal.alarm(0)
-        except: pass
 
 # ======== 多轮 Rollout ========
-def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_new_tokens=256, thinking_ratio=0.5, device="auto"):
+def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_new_tokens=256, thinking_ratio=0.5, device="cuda"):
     all_outputs = []
     prompt_ids = None
     response_ids = []
@@ -106,34 +100,33 @@ def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_
     open_thinking = random.random() < thinking_ratio
     for turn in range(max_turns):
         context = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, tools=tools, open_thinking=open_thinking)
-        inputs = tokenizer(context, return_tensors="pt", add_special_tokens=False).to(device)
-        context_ids = inputs["input_ids"][0].tolist()
         if prompt_ids is None:
-            prompt_ids = context_ids
+            prompt_ids = tokenizer(context, add_special_tokens=False)["input_ids"]
+        input_ids = torch.tensor([prompt_ids + response_ids], device=device)
         rollout_result = rollout_engine.rollout(
-            prompt_ids=inputs["input_ids"],
-            attention_mask=inputs["attention_mask"],
+            prompt_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids),
             num_generations=1,
             max_new_tokens=max_new_tokens,
             temperature=0.8,
         )
-        new_ids = rollout_result.completion_ids[0].tolist()
-        new_logps = rollout_result.per_token_logps[0].tolist()
-        if len(new_ids) != len(new_logps): Logger(f"rollout token/logprob length mismatch: {len(new_ids)} vs {len(new_logps)}")
-        pairs = [(t, lp) for t, lp in zip(new_ids, new_logps) if t != tokenizer.pad_token_id and t != tokenizer.eos_token_id]
-        new_ids = [t for t, _ in pairs]
-        new_logps = [lp for _, lp in pairs]
+        valid_len = int(rollout_result.completion_mask[0].sum().item())
+        new_ids = rollout_result.completion_ids[0, :valid_len].tolist()
+        new_logps = rollout_result.per_token_logps[0, :valid_len].tolist()
+        if len(new_ids) != len(new_logps):
+            raise RuntimeError(f"rollout token/logprob length mismatch: {len(new_ids)} vs {len(new_logps)}")
         new_text = rollout_result.completions[0]
         all_outputs.append(new_text)
         response_ids.extend(new_ids)
-        response_mask.extend([1] * len(new_ids))
+        response_mask.extend([int(t != tokenizer.eos_token_id) for t in new_ids])
         response_old_logps.extend(new_logps)
         final_context = context + new_text
         calls = parse_tool_calls(new_text)
         if not calls:
             break
         unfinished = turn == max_turns - 1
-        messages.append({"role": "assistant", "content": new_text})
+        assistant_message = {"role": "assistant", "content": new_text}
+        messages.append(assistant_message)
         for call in calls:
             name, raw = call.get("name", ""), call.get("arguments", {})
             if isinstance(raw, str):
@@ -143,10 +136,17 @@ def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_
             result_str = (json.dumps(result, ensure_ascii=False) if result else '{"error": "tool not found"}')[:2048]  # 防止天文数字撑爆tokenizer
             messages.append({"role": "tool", "content": result_str})
 
+        marker = f"<|agent_observation_{id(messages)}_{len(response_ids)}|>"
+        assistant_message["content"] += marker
+        marked_context = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=not unfinished, tools=tools, open_thinking=open_thinking)
+        assistant_message["content"] = new_text
+        _, found, observation = marked_context.partition(marker)
+        if not found:
+            raise RuntimeError("chat template did not preserve the assistant content boundary")
+        obs_delta = tokenizer(observation, add_special_tokens=False)["input_ids"]
+        if new_ids and new_ids[-1] == tokenizer.eos_token_id and obs_delta[:1] == [tokenizer.eos_token_id]:
+            obs_delta = obs_delta[1:]
         observe_context = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=not unfinished, tools=tools, open_thinking=open_thinking)
-        observe_ids = tokenizer(observe_context, return_tensors="pt", add_special_tokens=False)["input_ids"][0].tolist()
-        current_len = len(prompt_ids) + len(response_ids)
-        obs_delta = observe_ids[current_len:]
         response_ids.extend(obs_delta)
         response_mask.extend([0] * len(obs_delta))
         response_old_logps.extend([0.0] * len(obs_delta))
@@ -156,7 +156,7 @@ def rollout_single(rollout_engine, tokenizer, messages, tools, max_turns=3, max_
     prompt_ids = prompt_ids or []
     return final_output, final_context, prompt_ids, response_ids, response_mask, response_old_logps, list(all_outputs), unfinished
 
-def rollout_batch(rollout_engine, tokenizer, messages_batch, tools_batch, num_gen, max_turns=3, max_new_tokens=256, thinking_ratio=0.5, device="auto"):
+def rollout_batch(rollout_engine, tokenizer, messages_batch, tools_batch, num_gen, max_turns=3, max_new_tokens=256, thinking_ratio=0.5, device="cuda"):
     all_completions = []
     all_contexts = []
     all_prompt_ids = []
@@ -185,7 +185,7 @@ def validate_gt_in_text(text, gt_list):
     nums = [float(x) for x in re.findall(r'(?<![\w.])[-+]?\d+(?:\.\d+)?(?![\w.])', text_num)]
     return {g for g in gt_list if ((s := str(g).strip()) and s.lower() in text.lower()) or (re.fullmatch(r'[-+]?\d+(?:\.\d+)?', str(g).strip().replace(',', '')) and any(abs(float(str(g).strip().replace(',', '')) - n) < 1e-6 for n in nums))}
 
-def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, reward_model=None, device="auto", turn_outputs_batch=None, unfinished_batch=None):
+def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, reward_model=None, device="cuda", turn_outputs_batch=None, unfinished_batch=None):
     rewards = torch.zeros(len(completions), device=device)
     for idx, response in enumerate(completions):
         reward, answer = 0.0, response
@@ -239,19 +239,11 @@ def calculate_rewards(prompts, completions, gt_batch, tools_batch, num_gen, rewa
     return rewards
 
 # ================================ 工具与 Reward = End ================================
-def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
-
-def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False, remaining_steps=0):
-    last_step = start_step
-    executed_steps = 0
-    max_steps_reached = False
+def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model=None, start_step=0, wandb=None, use_sglang=False):
     for step, batch in enumerate(loader, start=start_step + 1):
-        last_step = step
-        executed_steps += 1
         messages_batch = batch['messages']
         tools_batch = batch['tools']
         gt_batch = batch['gt']
-        last_step = step
 
         with torch.no_grad():
             completions, contexts, prompt_ids_batch, response_ids_batch, response_masks_batch, response_old_logps_batch, turn_outputs_batch, unfinished_batch = rollout_batch(rollout_engine, tokenizer, messages_batch, tools_batch, args.num_generations, max_turns=3, max_new_tokens=args.max_gen_len, thinking_ratio=args.thinking_ratio, device=args.device)
@@ -274,24 +266,18 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         prompt_lens = torch.tensor([prompt_len for _, _, prompt_len, _ in packed_samples], device=args.device)
         full_response_masks = torch.tensor([mask + [0] * (max_len - len(mask)) for _, mask, _, _ in packed_samples], device=args.device, dtype=torch.float32)
         old_per_token_logps = torch.tensor([old_logps + [0.0] * ((max_len - 1) - len(old_logps)) for _, _, _, old_logps in packed_samples], device=args.device, dtype=torch.float32)
-        full_mask = (input_ids != tokenizer.pad_token_id).long()
+        full_mask = (torch.arange(max_len, device=args.device).unsqueeze(0) < seq_lens.unsqueeze(1)).long()
 
         rewards = calculate_rewards(prompts, completions, gt_batch, tools_batch, args.num_generations, reward_model, device=args.device, turn_outputs_batch=turn_outputs_batch, unfinished_batch=unfinished_batch)
 
-        model_unwrapped = model.module if isinstance(model, DistributedDataParallel) else model
         with autocast_ctx:
-            # res = model_unwrapped(input_ids, attention_mask=full_mask)
-            res = model_unwrapped(input_ids)
-
+            res = model(input_ids, attention_mask=full_mask)
             aux_loss = res.aux_loss if lm_config.use_moe else torch.tensor(0.0, device=args.device)
-            # logits = res.logits[:, :-1, :]
-            # per_token_logps = F.log_softmax(logits, dim=-1).gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-            logits = res.logits[:, :-1, :].float()
+            logits = res.logits[:, :-1, :]
             per_token_logps = F.log_softmax(logits, dim=-1).gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
 
         with torch.no_grad():
-            # ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=full_mask)
-            ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=None)
+            ref_per_token_logps = compute_per_token_logps(ref_model, input_ids, input_ids.size(1) - 1, attention_mask=full_mask)
 
         completion_mask = full_response_masks[:, 1:]
         is_eos = (input_ids[:, 1:] == tokenizer.eos_token_id) & completion_mask.bool()
@@ -327,66 +313,25 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         std_r = grouped_rewards.std(dim=1, unbiased=False).repeat_interleave(args.num_generations)
         advantages = (rewards - mean_r) / (std_r + 1e-4)
 
-        # kl_div = ref_per_token_logps - per_token_logps
-        # per_token_kl = torch.exp(kl_div) - kl_div - 1
-        # ratio = torch.exp(per_token_logps - old_per_token_logps)
-
-        # Keep numerically sensitive RL calculations in FP32.
-        policy_logps = per_token_logps.float()
-        reference_logps = ref_per_token_logps.float()
-        behavior_logps = old_per_token_logps.float()
-
-        kl_div = reference_logps - policy_logps
-        per_token_kl = torch.exp(torch.clamp(kl_div, min=-20.0, max=20.0)) - kl_div - 1.0
-
-        log_ratio = policy_logps - behavior_logps
-        ratio = torch.exp(torch.clamp(log_ratio, min=-20.0, max=20.0))
-
-        # if args.loss_type == "cispo":
-        #     clamped_ratio = torch.clamp(ratio, max=args.epsilon_high).detach()
-        #     per_token_loss = -(clamped_ratio * advantages.unsqueeze(1) * per_token_logps - args.beta * per_token_kl)
-        # else:
-        #     clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
-        #     per_token_loss1 = ratio * advantages.unsqueeze(1)
-        #     per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
-        #     per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
+        kl_div = ref_per_token_logps - per_token_logps
+        per_token_kl = torch.exp(kl_div) - kl_div - 1
+        ratio = torch.exp(per_token_logps - old_per_token_logps)
         if args.loss_type == "cispo":
-            clamped_ratio = torch.clamp(ratio, max=args.epsilon_high,).detach()
-
-            per_token_loss = -(clamped_ratio * advantages.float().unsqueeze(1) * policy_logps - args.beta * per_token_kl)
+            clamped_ratio = torch.clamp(ratio, max=args.epsilon_high).detach()
+            per_token_loss = -(clamped_ratio * advantages.unsqueeze(1) * per_token_logps - args.beta * per_token_kl)
         else:
-            clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon,)
-
-            per_token_loss1 = ratio * advantages.float().unsqueeze(1)
-            per_token_loss2 = clipped_ratio * advantages.float().unsqueeze(1)
-
+            clipped_ratio = torch.clamp(ratio, 1 - args.epsilon, 1 + args.epsilon)
+            per_token_loss1 = ratio * advantages.unsqueeze(1)
+            per_token_loss2 = clipped_ratio * advantages.unsqueeze(1)
             per_token_loss = -(torch.min(per_token_loss1, per_token_loss2) - args.beta * per_token_kl)
-
         policy_loss = (((per_token_loss * completion_mask).sum(dim=1)[valid_rows] / token_counts[valid_rows].clamp(min=1)).mean()
                        if valid_rows.any() else per_token_loss.sum() * 0.0)
         loss = (policy_loss + aux_loss) / args.accumulation_steps
-        if directml_fp16:
-            check_finite_loss(loss, context=f"epoch {epoch + 1}, step {step}")
+        loss.backward()
 
-        backward_loss(
-            loss,
-            scaler,
-            args.device,
-            args.dtype,
-            args.directml_loss_scale
-        )
-
-        if step % args.accumulation_steps == 0:
-            optimizer_step(
-                model,
-                optimizer,
-                scaler,
-                args.grad_clip if args.grad_clip > 0 else float("inf"),
-                args.device,
-                args.dtype,
-                args.directml_loss_scale
-            )
-            scheduler.step()
+        if step % args.accumulation_steps == 0 or step == iters:
+            if args.grad_clip > 0: torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            optimizer.step(); scheduler.step(); optimizer.zero_grad()
 
         if step % args.log_interval == 0 or step == iters:
             pl = loss.item() * args.accumulation_steps
@@ -407,9 +352,9 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
             raw_model = model.module if isinstance(model, DistributedDataParallel) else model
             raw_model = getattr(raw_model, '_orig_mod', raw_model)
             state_dict = raw_model.state_dict()
-            torch.save({k: v.detach().cpu().half() for k, v in state_dict.items()}, ckp)
+            torch.save({k: v.half().cpu() for k, v in state_dict.items()}, ckp)
             lm_checkpoint(lm_config, weight=args.save_weight, model=model, optimizer=optimizer,
-                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler, scaler=scaler)
+                         epoch=epoch, step=step, wandb=wandb, save_dir='../checkpoints', scheduler=scheduler)
             model.train()
             del state_dict
 
@@ -418,24 +363,6 @@ def rl_train_epoch(epoch, loader, iters, rollout_engine, ref_model, reward_model
         del per_token_logps, ref_per_token_logps
         del completions, rewards, grouped_rewards, mean_r, std_r, advantages, completion_mask
 
-        if remaining_steps > 0 and executed_steps >= remaining_steps:
-            max_steps_reached = True
-            break
-
-    if last_step > start_step and last_step % args.accumulation_steps != 0:
-        optimizer_step(
-            model,
-            optimizer,
-            scaler,
-            args.grad_clip if args.grad_clip > 0 else float("inf"),
-            args.device,
-            args.dtype,
-            args.directml_loss_scale
-        )
-        scheduler.step()
-
-
-    return executed_steps, max_steps_reached
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MiniMind Agent RL")
@@ -444,14 +371,11 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=1, help="训练轮数")
     parser.add_argument("--batch_size", type=int, default=2, help="批次大小")
     parser.add_argument("--learning_rate", type=float, default=3e-7, help="学习率")
-    parser.add_argument("--device", type=str, default="auto", help="训练设备")
+    parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="数据类型 bfloat16/float16")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=1, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--directml_loss_scale", type=float, default=1024.0, help="Static loss scale used for DirectML FP16 training")
-    parser.add_argument("--directml_adam_eps", type=float, default=1e-4, help="AdamW epsilon used for DirectML FP16 training")
-    parser.add_argument("--max_steps", type=int, default=0, help="Maximum number of training steps for the entire run (0 = no limit)")
     parser.add_argument("--log_interval", type=int, default=1, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=10, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="模型隐藏层维度")
@@ -481,9 +405,8 @@ if __name__ == "__main__":
     parser.add_argument("--sglang_shared_path", type=str, default="./sglang_ckpt_agent", help="SGLang共享存储路径")
     args = parser.parse_args()
 
-    args.device = get_device(args.device)
-    local_rank = init_distributed_mode(args.device)
-    if dist.is_initialized(): args.device = get_device(f"cuda:{local_rank}")
+    local_rank = init_distributed_mode()
+    if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
 
     os.makedirs(args.save_dir, exist_ok=True)
@@ -491,10 +414,9 @@ if __name__ == "__main__":
                                max_seq_len=args.max_seq_len + args.max_gen_len, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='../checkpoints') if args.from_resume == 1 else None
 
-    device_type = args.device.type
+    device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    directml_fp16 = is_directml_fp16(args.device, args.dtype)
-    autocast_ctx = torch.cuda.amp.autocast(dtype=dtype) if device_type == "cuda" else nullcontext()
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
 
     wandb = None
     if args.use_wandb and is_main_process():
@@ -503,12 +425,12 @@ if __name__ == "__main__":
         resume = 'must' if wandb_id else None
         wandb.init(project=args.wandb_project, name=f"Agent-RL-E{args.epochs}-B{args.batch_size}-LR{args.learning_rate}", id=wandb_id, resume=resume)
 
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
+    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
 
-    ref_model, _ = init_model(lm_config, args.from_weight, device=args.device, dtype=args.dtype)
+    ref_model, _ = init_model(lm_config, args.from_weight, device=args.device)
     ref_model = ref_model.eval().requires_grad_(False)
 
-    reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float32 if is_directml_device(args.device) else torch.float16)
+    reward_model = LMForRewardModel(args.reward_model_path, device=args.device, dtype=torch.float16)
     Logger(f'Loaded reward model from {args.reward_model_path}')
     # Rollout引擎
     rollout_engine = create_rollout_engine(
@@ -523,13 +445,8 @@ if __name__ == "__main__":
     )
     train_ds = AgentRLDataset(args.data_path, tokenizer, max_length=lm_config.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
-    scaler = create_grad_scaler(args.device, args.dtype)
-    optimizer = optim.AdamW(
-        model.parameters(),
-        lr=args.learning_rate,
-        eps=get_adamw_epsilon(args.device, args.dtype, args.directml_adam_eps)
-    )
-    # def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
+    optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
+    def collate_fn(batch): return {'messages': [b['messages'] for b in batch], 'tools': [b['tools'] for b in batch], 'gt': [b['gt'] for b in batch]}
     loader_for_count = DataLoader(train_ds, batch_size=args.batch_size, sampler=train_sampler, collate_fn=collate_fn)
     iters = len(loader_for_count)
     total_optimizer_steps = math.ceil(iters / args.accumulation_steps) * args.epochs
@@ -539,51 +456,29 @@ if __name__ == "__main__":
     if ckp_data:
         model.load_state_dict(ckp_data['model'])
         optimizer.load_state_dict(ckp_data['optimizer'])
-        configure_optimizer_for_directml_fp16(
-            optimizer, args.device, args.dtype, args.directml_adam_eps
-        )
-        if ckp_data.get('scaler') is not None:
-            scaler.load_state_dict(ckp_data['scaler'])
         scheduler.load_state_dict(ckp_data['scheduler'])
         start_epoch = ckp_data['epoch']
         start_step = ckp_data.get('step', 0)
 
     if args.use_compile == 1:
-        if is_directml_device(args.device):
-            raise RuntimeError("torch.compile is not currently supported with DirectML.")
         model = torch.compile(model)
         Logger('torch.compile enabled')
-        rollout_engine.update_policy(model)
     if dist.is_initialized():
-        model = DistributedDataParallel(model, device_ids=[local_rank])
+        # 同 train_ppo：RoPE buffer 各 rank 一致，每步广播纯属浪费
+        model = DistributedDataParallel(model, device_ids=[local_rank], broadcast_buffers=False)
     rollout_engine.update_policy(model)
-
-    total_run_steps = 0
 
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
         setup_seed(42 + epoch); indices = torch.randperm(len(train_ds)).tolist()
         skip = start_step if (epoch == start_epoch and start_step > 0) else 0
         batch_sampler = SkipBatchSampler(train_sampler or indices, args.batch_size, skip)
-        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=(device_type == "cuda"), collate_fn=collate_fn)
-
-        remaining_steps = (
-            args.max_steps - total_run_steps
-            if args.max_steps > 0
-            else 0
-        )
-
+        loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True, collate_fn=collate_fn)
         if skip > 0:
             Logger(f'Epoch [{epoch+1}/{args.epochs}]: skip {start_step} steps')
-            executed_steps, max_steps_reached = rl_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
+            rl_train_epoch(epoch, loader, len(loader) + skip, rollout_engine, ref_model, reward_model, start_step, wandb, use_sglang = (args.rollout_engine == "sglang"))
         else:
-            executed_steps, max_steps_reached = rl_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang=(args.rollout_engine == "sglang"), remaining_steps=remaining_steps)
-
-        total_run_steps += executed_steps
-
-        if max_steps_reached:
-            Logger(f'Maximum training steps reached: {total_run_steps}')
-            break
+            rl_train_epoch(epoch, loader, len(loader), rollout_engine, ref_model, reward_model, 0, wandb, use_sglang = (args.rollout_engine == "sglang"))
 
     if dist.is_initialized():
         dist.barrier()

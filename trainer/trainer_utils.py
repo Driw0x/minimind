@@ -5,6 +5,8 @@ import os
 import sys
 __package__ = "trainer"
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+import ast
+import operator
 import random
 import math
 import numpy as np
@@ -14,305 +16,6 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import Sampler
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
 from model.model_minimind import MiniMindForCausalLM
-
-try:
-    import torch_directml
-except ImportError:
-    torch_directml = None
-
-
-def get_device(device="auto"):
-    if device is None:
-        device = "auto"
-
-    if isinstance(device, torch.device):
-        return device
-
-    device = str(device).lower()
-
-    if device == "auto":
-        if torch_directml is not None:
-            return torch_directml.device()
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-
-    if device in {"directml", "dml"}:
-        if torch_directml is None:
-            raise RuntimeError("DirectML requested but torch-directml is not installed.")
-        return torch_directml.device()
-
-    if device.startswith("directml:") or device.startswith("dml:"):
-        if torch_directml is None:
-            raise RuntimeError("DirectML requested but torch-directml is not installed.")
-
-        index = int(device.split(":", 1)[1])
-
-        if index < 0 or index >= torch_directml.device_count():
-            raise ValueError(
-                f"Invalid DirectML device index {index}. "
-                f"Available devices: 0-{torch_directml.device_count() - 1}"
-            )
-
-        return torch_directml.device(index)
-
-    return torch.device(device)
-
-
-def is_directml_device(device):
-    return get_device(device).type == "privateuseone"
-
-
-def is_directml_fp16(device, dtype):
-    return is_directml_device(device) and str(dtype).lower() in {
-        "float16",
-        "fp16",
-        "torch.float16"
-    }
-
-
-def prepare_model_precision(model, device, dtype):
-    device = get_device(device)
-
-    if is_directml_fp16(device, dtype):
-        model = model.half()
-
-    return model.to(device)
-
-
-# DirectML FP16 uses FP32 master weights for optimizer updates.
-def create_fp32_master_params(model):
-    return [
-        torch.nn.Parameter(parameter.detach().float().clone(), requires_grad=True)
-        for parameter in model.parameters()
-        if parameter.requires_grad
-    ]
-
-
-@torch.no_grad()
-def sync_model_to_master(model, master_params):
-    model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
-
-    if len(model_params) != len(master_params):
-        raise RuntimeError(
-            f"Model/master parameter count mismatch: "
-            f"{len(model_params)} != {len(master_params)}"
-        )
-
-    for model_param, master_param in zip(model_params, master_params):
-        master_param.copy_(model_param.detach().float())
-
-
-@torch.no_grad()
-def sync_master_to_model(model, master_params):
-    model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
-
-    if len(model_params) != len(master_params):
-        raise RuntimeError(
-            f"Model/master parameter count mismatch: "
-            f"{len(model_params)} != {len(master_params)}"
-        )
-
-    for model_param, master_param in zip(model_params, master_params):
-        model_param.copy_(master_param.to(dtype=model_param.dtype))
-
-
-def export_fp32_master_weights(master_params):
-    return [parameter.detach().cpu().float() for parameter in master_params]
-
-
-@torch.no_grad()
-def load_fp32_master_weights(master_params, saved_weights):
-    if len(master_params) != len(saved_weights):
-        raise RuntimeError(
-            f"Saved/master parameter count mismatch: "
-            f"{len(saved_weights)} != {len(master_params)}"
-        )
-
-    for master_param, saved_param in zip(master_params, saved_weights):
-        master_param.copy_(saved_param.to(device=master_param.device, dtype=torch.float32))
-
-
-def create_grad_scaler(device, dtype):
-    device = get_device(device)
-
-    return torch.cuda.amp.GradScaler(
-        enabled=(
-            device.type == "cuda" and
-            str(dtype).lower() in {"float16", "fp16", "torch.float16"}
-        )
-    )
-
-
-def get_adamw_epsilon(
-    device,
-    dtype,
-    directml_adam_eps=1e-4,
-    default_eps=1e-8
-):
-    if is_directml_fp16(device, dtype):
-        if directml_adam_eps <= 0:
-            raise ValueError(
-                "DirectML FP16 AdamW epsilon must be greater than 0."
-            )
-
-        return directml_adam_eps
-
-    return default_eps
-
-
-def backward_loss(
-    loss,
-    scaler,
-    device,
-    dtype,
-    directml_loss_scale=1024.0
-):
-    if is_directml_fp16(device, dtype):
-        if directml_loss_scale <= 0:
-            raise ValueError(
-                "DirectML FP16 loss scale must be greater than 0."
-            )
-
-        scaled_loss = loss * directml_loss_scale
-        scaled_loss.backward()
-        return scaled_loss
-
-    scaler.scale(loss).backward()
-    return None
-
-
-def optimizer_step(
-    model,
-    optimizer,
-    scaler,
-    grad_clip,
-    device,
-    dtype,
-    directml_loss_scale=1024.0,
-    check_finite=True,
-    master_params=None
-):
-    if is_directml_fp16(device, dtype):
-        if directml_loss_scale <= 0:
-            raise ValueError(
-                "DirectML FP16 loss scale must be greater than 0."
-            )
-
-        if master_params is not None:
-            model_params = [parameter for parameter in model.parameters() if parameter.requires_grad]
-
-            if len(model_params) != len(master_params):
-                raise RuntimeError(
-                    f"Model/master parameter count mismatch: "
-                    f"{len(model_params)} != {len(master_params)}"
-                )
-
-            optimizer.zero_grad(set_to_none=True)
-
-            for model_param, master_param in zip(model_params, master_params):
-                if model_param.grad is None:
-                    master_param.grad = None
-                    continue
-
-                master_param.grad = model_param.grad.detach().float()
-                master_param.grad.div_(directml_loss_scale)
-
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                master_params,
-                grad_clip
-            )
-
-            if check_finite:
-                grad_norm_value = grad_norm.detach().float().cpu().item()
-
-                if not math.isfinite(grad_norm_value):
-                    raise RuntimeError(
-                        f"Non-finite gradient norm detected: {grad_norm_value}"
-                    )
-
-            optimizer.step()
-            sync_master_to_model(model, master_params)
-            optimizer.zero_grad(set_to_none=True)
-            model.zero_grad(set_to_none=True)
-
-            return grad_norm
-
-        for parameter in model.parameters():
-            if parameter.grad is not None:
-                parameter.grad.div_(directml_loss_scale)
-
-        grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(),
-            grad_clip
-        )
-
-        if check_finite:
-            grad_norm_value = grad_norm.detach().float().cpu().item()
-
-            if not math.isfinite(grad_norm_value):
-                raise RuntimeError(
-                    f"Non-finite gradient norm detected: {grad_norm_value}"
-                )
-
-        optimizer.step()
-        optimizer.zero_grad(set_to_none=True)
-
-        return grad_norm
-
-    scaler.unscale_(optimizer)
-
-    grad_norm = torch.nn.utils.clip_grad_norm_(
-        model.parameters(),
-        grad_clip
-    )
-
-    scaler.step(optimizer)
-    scaler.update()
-
-    optimizer.zero_grad(set_to_none=True)
-
-    return grad_norm
-
-
-def check_finite_loss(loss, context=""):
-    loss_value = loss.detach().float().cpu().item()
-
-    if not math.isfinite(loss_value):
-        suffix = f" ({context})" if context else ""
-
-        raise RuntimeError(
-            f"Non-finite loss detected{suffix}: {loss_value}"
-        )
-
-    return loss_value
-
-
-def configure_optimizer_for_directml_fp16(
-    optimizer,
-    device,
-    dtype,
-    directml_adam_eps=1e-4
-):
-    if not is_directml_fp16(device, dtype):
-        return optimizer
-
-    if directml_adam_eps <= 0:
-        raise ValueError(
-            "DirectML FP16 AdamW epsilon must be greater than 0."
-        )
-
-    for param_group in optimizer.param_groups:
-        param_group["eps"] = directml_adam_eps
-
-    return optimizer
-
-
-def clear_device_cache(device=None):
-    device = get_device(device or "auto")
-    if device.type == "cuda":
-        torch.cuda.empty_cache()
-
 
 def get_model_params(model, config):
     total = sum(p.numel() for p in model.parameters()) / 1e6
@@ -340,17 +43,9 @@ def get_lr(current_step, total_steps, lr):
     return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
 
 
-def init_distributed_mode(device=None):
+def init_distributed_mode():
     if int(os.environ.get("RANK", -1)) == -1:
-        return 0
-
-    device = get_device(device or "auto")
-
-    if is_directml_device(device):
-        raise RuntimeError("Distributed training is not currently supported with DirectML.")
-
-    if device.type != "cuda":
-        raise RuntimeError(f"Distributed training is currently supported only with CUDA, got device: {device}.")
+        return 0  # 非DDP模式
 
     dist.init_process_group(backend="nccl")
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -362,12 +57,10 @@ def setup_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
-        torch.backends.cudnn.deterministic = True
-        torch.backends.cudnn.benchmark = False
-
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoch=0, step=0, wandb=None, save_dir='../checkpoints', **kwargs):
     os.makedirs(save_dir, exist_ok=True)
@@ -393,7 +86,7 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
 
         resume_data = {
             'model': state_dict,
-            'optimizer': optimizer.state_dict() if optimizer is not None else None,
+            'optimizer': optimizer.state_dict(),
             'epoch': epoch,
             'step': step,
             'world_size': dist.get_world_size() if dist.is_initialized() else 1,
@@ -412,8 +105,8 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         torch.save(resume_data, resume_tmp)
         os.replace(resume_tmp, resume_path)
         del state_dict, resume_data
-        clear_device_cache()
-    else:
+        torch.cuda.empty_cache()
+    else:  # 加载模式
         if os.path.exists(resume_path):
             ckp_data = torch.load(resume_path, map_location='cpu')
             saved_ws = ckp_data.get('world_size', 1)
@@ -425,37 +118,19 @@ def lm_checkpoint(lm_config, weight='full_sft', model=None, optimizer=None, epoc
         return None
 
 
-def init_model(
-    lm_config,
-    from_weight='pretrain',
-    tokenizer_path='../model',
-    save_dir='../out',
-    device='auto',
-    dtype=None
-):
-    device = get_device(device)
+def init_model(lm_config, from_weight='pretrain', tokenizer_path='../model', save_dir='../out', device='cuda'):
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_path)
     model = MiniMindForCausalLM(lm_config)
 
-    if from_weight != 'none':
+    if from_weight!= 'none':
         moe_suffix = '_moe' if lm_config.use_moe else ''
         weight_path = f'{save_dir}/{from_weight}_{lm_config.hidden_size}{moe_suffix}.pth'
-        weights = torch.load(weight_path, map_location='cpu')
+        weights = torch.load(weight_path, map_location=device)
         model.load_state_dict(weights, strict=False)
 
     get_model_params(model, lm_config)
     Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
-
-    if dtype is not None:
-        model = prepare_model_precision(
-            model,
-            device,
-            dtype
-        )
-    else:
-        model = model.to(device)
-
-    return model, tokenizer
+    return model.to(device), tokenizer
 
 
 class SkipBatchSampler(Sampler):
@@ -486,32 +161,10 @@ class SkipBatchSampler(Sampler):
 
 class LMForRewardModel:
     def __init__(self, model_path, device="cuda", dtype=torch.float16):
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_path,
-            trust_remote_code=True
-        )
-
-        # InternLM2 Reward Model has a causal-mask incompatibility with DirectML.
-        # Keep the reward model on CPU while the MiniMind models stay on DirectML.
-        if is_directml_device(device):
-            reward_device = torch.device("cpu")
-            reward_dtype = torch.float32
-            Logger(
-                "DirectML detected: Reward Model will run on CPU "
-                "due to unsupported InternLM2 causal-mask operations."
-            )
-        else:
-            reward_device = device
-            reward_dtype = dtype
-
-        self.model = AutoModel.from_pretrained(
-            model_path,
-            torch_dtype=reward_dtype,
-            trust_remote_code=True
-        )
-
-        self.model = self.model.to(reward_device).eval()
-        self.device = reward_device
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+        self.model = AutoModel.from_pretrained(model_path, torch_dtype=dtype, trust_remote_code=True)
+        self.model = self.model.to(device).eval()
+        self.device = device
 
     @torch.no_grad()
     def get_score(self, messages, response):
@@ -524,3 +177,33 @@ class LMForRewardModel:
         ]
         score = self.model.get_score(self.tokenizer, eval_messages)
         return max(min(score, 3.0), -3.0)
+
+
+# ===== 数学表达式安全求值：替代 eval，只放行算术运算与 math 白名单（长度上限 512） =====
+def safe_math_eval(expression):
+    """对模型生成的数学表达式求值：支持 + - * / // % **、math 白名单函数与 pi/e/tau 常量。"""
+    def pow_guard(base, exp):  # 幂运算统一走这里，拦截 9**9**9 / 10**99999 这类把进程算死的输入
+        if abs(exp) > 1e4 or (abs(base) > 1 and abs(exp) * math.log10(abs(base)) > 100): raise ValueError('幂运算结果过大')
+        return base ** exp
+    def resolve(node):  # 同时兼容 sqrt(4) 与 math.sqrt(4) 两种写法
+        if isinstance(node, ast.Name): return node.id
+        if isinstance(node, ast.Attribute) and getattr(node.value, 'id', '') == 'math': return node.attr
+    def walk(node):
+        if isinstance(node, ast.Constant) and type(node.value) in (int, float): return node.value
+        name = resolve(node)
+        if name in consts: return consts[name]
+        if isinstance(node, ast.UnaryOp): return unary_ops[type(node.op)](walk(node.operand))
+        if isinstance(node, ast.BinOp): return bin_ops[type(node.op)](walk(node.left), walk(node.right))
+        if isinstance(node, ast.Call) and not node.keywords: return funcs[resolve(node.func)](*map(walk, node.args))
+        raise ValueError(f'不支持的表达式语法: {type(node).__name__}')
+    consts = {'pi': math.pi, 'e': math.e, 'tau': math.tau}
+    funcs = {'pow': pow_guard, **{n: getattr(math, n) for n in 'sqrt exp log log2 log10 sin cos tan asin acos atan atan2 sinh cosh tanh floor ceil trunc fabs fmod hypot gcd degrees radians'.split()}}
+    bin_ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod, ast.Pow: pow_guard}
+    unary_ops = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+    chars = str.maketrans({'^': '**', '×': '*', '÷': '/', '−': '-', '²': '**2', '³': '**3', '（': '(', '）': ')'})
+    expr = str(expression).translate(chars).strip()
+    if not expr or len(expr) > 512: raise ValueError('表达式为空或过长')
+    try:
+        return walk(ast.parse(expr, mode='eval').body)
+    except (KeyError, SyntaxError, TypeError):
+        raise ValueError('不支持的表达式语法') from None

@@ -38,6 +38,9 @@ htmlcov/
 # Jupyter
 .ipynb_checkpoints/
 
+directml/dataset/*.jsonl
+directml/out/
+directml/checkpoints/
 dataset/*.jsonl
-out/
 checkpoints/
+out/
