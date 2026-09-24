@@ -5,8 +5,7 @@ A Windows + AMD ROCm adaptation of [MiniMind](https://github.com/jingyaogong/min
 This fork keeps the original MiniMind project structure as close to upstream as possible while validating native AMD GPU training on Windows through ROCm and PyTorch.
 
 > **Active backend:** ROCm on Windows  
-> **Primary target:** AMD Radeon RX 7800 XT (`gfx1101`)  
-> **Legacy backend:** DirectML — archived in [`directml/`](directml/README.md)
+> **Primary target:** AMD Radeon RX 7800 XT (`gfx1101`)
 
 ---
 
@@ -24,80 +23,36 @@ The current priorities are:
 - validate checkpoint quality early, not only successful execution;
 - keep ROCm-specific changes minimal and isolated;
 - preserve compatibility with the upstream MiniMind structure;
-- validate Full SFT after pretraining is stable;
-- document the previous DirectML attempt separately.
+- validate Full SFT after pretraining is stable.
+
+Project planning and reproducible training commands are documented separately
+under [`docs/`](docs/).
 
 ---
 
-## Why ROCm?
+## Legacy DirectML
 
-A previous version of this fork attempted to replace the CUDA-oriented execution path with `torch-directml`.
+The previous Windows + DirectML adaptation is preserved as a completed
+compatibility and feasibility study under:
 
-That work reached broad functional compatibility: training could run, full epochs could complete, and the main DirectML smoke tests passed.
+**[`directml/`](directml/README.md)**
 
-However, model-quality validation exposed a blocking issue:
-
-```text
-Official upstream pretrain_768.pth
-    CPU inference       -> coherent
-    DirectML inference  -> coherent
-
-Locally trained DirectML checkpoints
-    epoch 1             -> incoherent
-    epoch 2             -> incoherent
-```
-
-Tokenizer and dataset checks were clean, and the official checkpoint generated coherently through the same evaluation path. The DirectML training path was therefore not retained.
-
-The full experiment, implementation details, benchmarks, tests and limitations are preserved here:
-
-**[DirectML archived experiment](directml/README.md)**
-
-ROCm is now the active AMD GPU backend for this fork.
+It contains the historical implementation, benchmarks, tests, documentation and
+final model-quality investigation. It is archived and is not part of the active
+training path.
 
 ---
 
 ## ROCm and PyTorch device semantics
 
-PyTorch on ROCm intentionally reuses the CUDA-facing Python API.
+PyTorch on ROCm intentionally reuses the CUDA-facing Python API. An AMD GPU
+running through ROCm is therefore addressed with `cuda` / `cuda:0`.
 
-This means that an AMD GPU running through ROCm is still addressed with:
+Do **not** replace the PyTorch device with `rocm`, `hip`, or a custom device
+name. CUDA-named PyTorch interfaces are expected on the ROCm/HIP backend.
 
-```python
-device = "cuda"
-```
-
-or:
-
-```python
-device = "cuda:0"
-```
-
-Do **not** replace the PyTorch device with `rocm`, `hip`, or a custom device name.
-
-Typical checks are:
-
-```python
-import torch
-
-print("PyTorch:", torch.__version__)
-print("HIP:", torch.version.hip)
-print("CUDA build:", torch.version.cuda)
-print("GPU available:", torch.cuda.is_available())
-
-if torch.cuda.is_available():
-    print("Device:", torch.cuda.get_device_name(0))
-```
-
-For a ROCm build:
-
-```text
-torch.cuda.is_available() -> True
-torch.version.hip         -> non-empty
-torch.version.cuda        -> None
-```
-
-Using `torch.cuda`, `.cuda()`, `cuda:0`, CUDA autocast APIs, and related PyTorch interfaces is therefore normal on ROCm.
+For the executable environment check, see
+[Verify the ROCm environment](#verify-the-rocm-environment).
 
 ---
 
@@ -140,13 +95,13 @@ Use a Python version supported by the ROCm/PyTorch combination selected from AMD
 Example:
 
 ```powershell
-py -3.12 -m venv .venv-rocm
+py -3.13 -m venv .venv
 ```
 
 Activate it:
 
 ```powershell
-.\.venv-rocm\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
 ```
 
 Upgrade pip:
@@ -157,23 +112,39 @@ python -m pip install --upgrade pip
 
 ### 3. Install ROCm-enabled PyTorch
 
-Install the ROCm/PyTorch build recommended by AMD for the selected Windows, GPU and ROCm versions.
+The ROCm-specific PyTorch dependencies are kept separately in:
 
-Use the official installation selector rather than copying an old wheel command from this repository:
+```text
+requirements-rocm.txt
+```
 
-[AMD — Install PyTorch for ROCm](https://rocm.docs.amd.com/projects/ai-ecosystem/en/latest/frameworks/pytorch/install.html)
-
-### 4. Install project dependencies
-
-`requirements-rocm.txt` is intentionally maintained manually for the active Windows ROCm environment.
-
-Once the file has been curated:
+Install them first:
 
 ```powershell
 pip install -r requirements-rocm.txt
 ```
 
-The legacy DirectML dependency set must not be reused as the ROCm dependency set.
+This keeps the backend-specific PyTorch packages separate from the upstream
+MiniMind dependencies.
+
+### 4. Install MiniMind dependencies
+
+Install the remaining project dependencies from:
+
+```powershell
+pip install -r requirements.txt
+```
+
+The recommended installation order is therefore:
+
+```text
+ROCm / PyTorch dependencies
+        ↓
+MiniMind dependencies
+```
+
+ROCm, PyTorch and AMD driver versions must remain compatible with each other.
+When changing versions, verify the current AMD compatibility documentation.
 
 ---
 
@@ -218,103 +189,15 @@ This is expected with PyTorch ROCm.
 
 ---
 
-## Training strategy
+## Project documentation
 
-The migration is intentionally validated in small steps.
+Documentation is split by responsibility:
 
-### Phase 1 — Environment validation
-
-Validate:
-
-```text
-ROCm installation
-    ↓
-PyTorch HIP build
-    ↓
-RX 7800 XT detected
-    ↓
-basic GPU tensor operations
-```
-
-### Phase 2 — Pretraining smoke test
-
-Run a short Dense pretraining test before a full training run.
-
-The goal is to verify:
-
-```text
-dataset loading
-    ↓
-forward pass
-    ↓
-finite loss
-    ↓
-backward pass
-    ↓
-optimizer step
-    ↓
-stable GPU memory
-    ↓
-checkpoint save/load
-    ↓
-early generation-quality check
-```
-
-The active pretraining entry point is:
-
-```text
-trainer/train_pretrain.py
-```
-
-Use the ROCm device through:
-
-```text
-cuda:0
-```
-
-### Phase 3 — Full pretraining
-
-Only start the full run after the bounded smoke test produces a valid checkpoint.
-
-Checkpoint quality should be evaluated during training rather than waiting until the end of multiple epochs.
-
-### Phase 4 — Full SFT
-
-Once the ROCm pretraining path is validated, continue with:
-
-```text
-trainer/train_full_sft.py
-```
-
-The same principle applies: validate a bounded run and checkpoint quality before launching the complete stage.
-
----
-
-## Validation principle
-
-A successful training process is not sufficient evidence that the backend is correct.
-
-This project distinguishes:
-
-```text
-execution correctness
-```
-
-from:
-
-```text
-model-quality correctness
-```
-
-A backend is considered usable only when it can:
-
-1. execute the training loop;
-2. keep losses finite and numerically stable;
-3. save and reload checkpoints;
-4. produce checkpoints whose generated output remains coherent;
-5. preserve expected behavior across training stages.
-
-This validation rule comes directly from the previous DirectML experiment.
+- [`docs/roadmap.md`](docs/roadmap.md) — milestones, mini-vs-full training rules,
+  stage dependencies and validation criteria;
+- [`docs/training_commands.md`](docs/training_commands.md) — reproducible trainer
+  commands, checkpoint outputs and resume usage;
+- [`docs/original/`](docs/original/) — preserved upstream MiniMind documentation.
 
 ---
 
@@ -325,9 +208,9 @@ minimind/
 │
 ├── dataset/                  # Dataset loading
 │
-├── directml/                 # Archived DirectML compatibility experiment
-│
-├── docs/
+├── docs/                     # Project documentation
+│   ├── roadmap.md            # Active milestones and validation plan
+│   ├── training_commands.md  # Reproducible training commands
 │   └── original/             # Original MiniMind documentation
 │
 ├── images/                   # Original project images/resources
@@ -336,35 +219,14 @@ minimind/
 ├── trainer/                  # Active ROCm/Windows training code
 │
 ├── eval_llm.py
-├── requirements-rocm.txt     # Manually curated ROCm/Windows dependencies
+├── requirements.txt          # MiniMind dependencies
+├── requirements-rocm.txt     # ROCm/PyTorch dependencies
 ├── .gitignore
 ├── LICENSE
 └── README.md
 ```
 
 Generated checkpoints, virtual environments, caches and local training outputs are runtime artifacts and should not be committed unless they are intentionally preserved as experimental evidence.
-
----
-
-## DirectML archive
-
-The complete previous DirectML adaptation is intentionally isolated from the active ROCm codebase:
-
-[`directml/README.md`](directml/README.md)
-
-It documents:
-
-- why DirectML was initially investigated;
-- the CUDA-to-DirectML compatibility changes;
-- device-placement work;
-- FP16 training workarounds;
-- unsupported operations and CPU fallbacks;
-- DirectML benchmarks;
-- training smoke tests;
-- checkpoint-quality validation;
-- the reason the DirectML training path was abandoned.
-
-The DirectML directory should be treated as an archived engineering experiment, not as an active backend.
 
 ---
 

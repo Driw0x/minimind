@@ -1,21 +1,11 @@
 # MiniMind Backend Roadmap
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document tracks the completed DirectML evaluation and the transition of
 MiniMind training to ROCm.
@@ -138,66 +128,70 @@ and identify the main performance bottlenecks.
 
 ## M5 --- DirectML Final Evaluation ✅
 
-Finalize the DirectML investigation with model-quality validation and decide
-whether it should remain the active training backend.
+Finalize the DirectML investigation with full-training model-quality validation
+and determine whether DirectML should remain a MiniMind training backend.
 
-### Historical finalization work
+### Finalization work
 
 -   [x] Apply identified performance optimizations
--   [ ] Finalize installation documentation
--   [x] Document supported training workflows
--   [ ] Add troubleshooting documentation
--   [ ] Clean up remaining CUDA assumptions
--   [ ] Validate the project from a fresh clone
--   [ ] Publish a reproducible DirectML-ready configuration
+-   [x] Document supported DirectML training workflows
 -   [x] Document periodic checkpoint and resume workflow
 -   [x] Correct DirectML cross-entropy normalization with ignored padding
 -   [x] Validate FP16 + FP32-master pretraining through two full epochs
 -   [x] Reject direct FP16 AdamW through long-run checkpoint diagnostics
 -   [x] Benchmark reduced diagnostic CPU synchronization
--   [ ] Validate Log-Sync checkpoint quality
+-   [x] Evaluate final DirectML checkpoints qualitatively
+-   [x] Compare DirectML- and ROCm-trained checkpoints on the same evaluation set
+-   [x] Re-evaluate the DirectML checkpoint under ROCm
+-   [x] Compare the same DirectML checkpoint under DirectML/ROCm in FP16 and FP32
+-   [x] Isolate the remaining blocker to the tested DirectML FP16 numerical path
+
+### Final evidence
+
+On the same `1,000` samples (`204,327` valid tokens), evaluated under ROCm:
+
+```text
+DirectML-trained: loss 6.880233, perplexity 972.8529
+ROCm-trained:     loss 1.846587, perplexity   6.3382
+```
+
+Using the same DirectML-trained checkpoint and one fixed batch (`873` valid
+tokens):
+
+```text
+DirectML FP16: 5.733902
+ROCm FP16:     6.230469
+
+DirectML FP32: 6.231627
+ROCm FP32:     6.231628
+```
+
+DirectML FP16 without SDPA produced non-finite logits, while DirectML and ROCm
+matched to approximately `1e-6` in FP32.
 
 ### Final outcome
 
--   [x] Clearly document the identified DirectML bottlenecks
--   [x] Document tested configurations and measured performance
--   [x] Define which workflows remain usable with DirectML
--   [x] Select ROCm as the next full-training backend
--   [x] Preserve the DirectML compatibility layer and tests
--   [x] Retain the DirectML work as a documented compatibility and feasibility study
+-   [x] DirectML execution compatibility is documented
+-   [x] DirectML performance and limitations are documented
+-   [x] Full-training checkpoint quality is rejected
+-   [x] The remaining blocker is classified as a DirectML FP16 numerical divergence
+-   [x] DirectML training is closed for this project
+-   [x] DirectML code, tests and evidence are retained as a completed feasibility study
 
-------------------------------------------------------------------------
-
-## M6 --- ROCm Migration 🚧
-
-Move MiniMind training away from the custom DirectML path and establish a clean
-ROCm baseline for the AMD GPU.
-
--   [x] Select ROCm as the replacement training backend
--   [x] Validate the basic ROCm precision path with FP16 autocast, FP32 weights,
-    and FP32 gradients
--   [ ] Reproduce the official MiniMind pretraining configuration on ROCm
--   [ ] Validate short-run loss behavior and gradient finiteness
--   [ ] Train a bounded checkpoint and compare it with the official checkpoint
--   [ ] Run qualitative generation checks before committing to a full epoch
--   [ ] Complete full Dense pretraining only after checkpoint quality is confirmed
--   [ ] Continue to Full SFT from the validated ROCm pretraining checkpoint
-
-> DirectML inference may still be useful, but DirectML is no longer the active
-> training backend. All new training validation should target ROCm.
+> This roadmap intentionally stops at M5. ROCm development is tracked in a
+> separate roadmap outside the DirectML archive.
 
 ------------------------------------------------------------------------
 
 ## Project Goal
 
-The project first evaluated whether DirectML could provide a practical
-MiniMind training backend on Windows. That study is now complete: the backend
-could execute the pipeline, but the resulting locally trained checkpoints did
-not reach acceptable generation quality. The active objective is now to obtain
-a correct and reproducible MiniMind training pipeline with ROCm.
+The DirectML project evaluated whether MiniMind could be trained reliably on an
+AMD Radeon GPU under Windows through `torch-directml`.
 
-The DirectML phase is considered a successful feasibility study because it
-produced a reproducible record of compatibility, performance, and model-quality
-limitations. The next success criterion is a ROCm-trained checkpoint whose
-quantitative diagnostics and qualitative generation both match expected
-MiniMind behavior.
+The study is complete. DirectML could execute the training pipeline and pass
+extensive compatibility, performance and smoke validation, but the final trained
+checkpoints did not reach acceptable model quality. Cross-backend validation
+isolated the remaining failure to the tested DirectML FP16 numerical path.
+
+The final deliverable is therefore the preserved feasibility study, not an active
+DirectML training backend.

@@ -1,0 +1,23 @@
+{
+  "label": "DirectML-FP32",
+  "device_arg": "directml:1",
+  "checkpoint": "E:\\workspace\\git_workspace\\minimind\\directml\\out\\pretrain_768.pth",
+  "indices": [
+    233478,
+    52451,
+    576778,
+    513575,
+    468106,
+    292632,
+    214947,
+    1143716
+  ],
+  "valid_tokens": 873,
+  "backend_loss": 6.231627464294434,
+  "cpu_reference_loss": 6.231627464294434,
+  "loss_difference": 0.0,
+  "logits_mean": -0.9249217510223389,
+  "logits_std": 2.2534096240997314,
+  "logits_abs_max": 25.202608108520508,
+  "logits_finite_ratio": 1.0
+}

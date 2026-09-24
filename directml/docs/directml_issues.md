@@ -1,27 +1,36 @@
 # MiniMind --- DirectML Technical Issues
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document records technical compatibility issues encountered while
 adapting MiniMind to DirectML.
 
 Benchmark and performance-related observations are documented separately
-in [`directml_benchmarks.md`](directml_benchmarks.md).
+in [`directml_benchmarks.md`](directml_benchmarks.md). Current limitations are
+summarized below; detailed causes and decisions remain in the issue history.
+
+
+## Current DirectML Limitations
+
+| Feature / operation | Status | Retained handling |
+| --- | --- | --- |
+| AdamW `aten::lerp.Scalar_out` | Partial | Automatic CPU fallback |
+| Reward-model causal mask | Unsupported | Reward model on CPU |
+| `torch.compile` | Unsupported | Keep disabled |
+| CUDA AMP/autocast equivalent | Not available | DirectML-specific FP16 path |
+| Sparse MoE routing | Partial | Scatter-free compatibility path |
+| Agent full-sequence attention mask | Partial | Avoid problematic mask path |
+| Cross-entropy `ignore_index` reduction | Partial | Per-token loss + FP32 valid-token mean |
+| DirectML FP16 numerical consistency | **Blocking** | Do not use DirectML for full training |
+
+The final blocking limitation is the FP16 numerical divergence isolated during
+M5. DirectML remains useful only as a historical compatibility and regression
+target.
 
 ------------------------------------------------------------------------
 
@@ -134,6 +143,27 @@ DirectML training step: OK
 The fallback is accepted because it does not prevent correct training.
 
 It remains documented because it may affect performance.
+
+------------------------------------------------------------------------
+
+# `torch.compile` Unsupported on DirectML
+
+## Problem
+
+The archived DirectML training path does not support `torch.compile`.
+
+## Solution
+
+Run DirectML workflows with:
+
+```text
+--use_compile 0
+```
+
+## Decision
+
+Compilation remains disabled in the DirectML archive. No further workaround is
+pursued because DirectML is no longer the active training backend.
 
 ------------------------------------------------------------------------
 
@@ -1016,38 +1046,48 @@ trainer is treated as the final training reference.
 
 ------------------------------------------------------------------------
 
-# Final Blocking Issue — Full-Training Model Quality
+# M5 Final Blocking Issue — DirectML FP16 Numerical Divergence
 
 ## Problem
 
-After the final two-epoch Dense pretraining run, the DirectML-trained checkpoint
-still produced incoherent generation. The same behavior was already visible in
-the epoch-1 checkpoint.
+The final DirectML-trained checkpoint remained incoherent even when evaluated
+under ROCm, while the ROCm-trained checkpoint generated coherent text.
 
-By contrast, the official upstream `pretrain_768.pth` checkpoint produced
-coherent text when evaluated on both CPU and DirectML.
+On the same `1,000` examples (`204,327` valid tokens), evaluated under ROCm:
 
-## Evidence
+```text
+DirectML-trained checkpoint: loss 6.880233, perplexity 972.8529
+ROCm-trained checkpoint:     loss 1.846587, perplexity   6.3382
+```
 
-The following candidates were checked and did not explain the discrepancy:
+This confirms that the DirectML checkpoint itself is degraded; the issue is not
+limited to DirectML generation.
 
-- tokenizer encode/decode behavior;
-- pretraining dataset readability and content;
-- checkpoint loading and evaluation path;
-- DirectML inference itself, because the official checkpoint generates
-  coherently on DirectML.
+## Final diagnosis
 
-Earlier DirectML fixes solved real execution and numerical problems, including
-FP16 optimizer precision, cross-entropy reduction, MoE routing, attention-mask
-compatibility, and synchronization overhead. Nevertheless, those fixes did not
-produce a locally trained checkpoint with acceptable generation quality.
+Using the same DirectML-trained checkpoint and the same fixed batch (`873` valid
+tokens):
+
+```text
+DirectML FP16: 5.733902
+ROCm FP16:     6.230469
+
+DirectML FP32: 6.231627
+ROCm FP32:     6.231628
+```
+
+DirectML FP16 without SDPA produced only non-finite logits, while ROCm remained
+stable. In contrast, DirectML and ROCm FP32 matched to approximately `1e-6`.
+
+The DirectML FP16 loss itself was internally consistent with a CPU FP32
+cross-entropy recomputation from the same DirectML logits (`5.733902` vs
+`5.736305`). Therefore the retained cross-entropy reduction is not the remaining
+root issue: the FP16 forward path already produces materially different logits.
 
 ## Decision
 
-The project no longer treats successful DirectML execution, finite losses, or
-matching diagnostic losses as sufficient evidence of a valid training backend.
+The final blocker is classified as a **DirectML FP16 numerical divergence** in
+the tested stack. No additional DirectML training workaround is pursued.
 
-The unresolved full-training quality gap is considered a blocking DirectML
-training issue for this project. Further DirectML training work is stopped, the
-existing implementation is preserved for documentation and regression, and the
-active training path moves to **ROCm**.
+The DirectML implementation remains archived for compatibility, regression and
+reproducibility. Active MiniMind training continues with **ROCm**.

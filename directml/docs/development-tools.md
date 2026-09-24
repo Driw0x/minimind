@@ -1,21 +1,11 @@
 # Development Tools
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document describes the development utilities that were added to support
 and validate the historical DirectML adaptation of MiniMind. They remain useful
@@ -306,3 +296,24 @@ Passed: 9/9
 This runner is intentionally executed separately from the normal
 `pytest -q` suite because it launches real DirectML training workloads
 and is substantially heavier than unit and lightweight regression tests.
+
+------------------------------------------------------------------------
+
+## M5 Backend Comparison Utilities
+
+M5 final DirectML validation used three small cross-backend utilities:
+
+```text
+scripts/compare_pretrain_logs.py
+    -> plots training loss, learning rate, ETA and relative loss reduction
+
+scripts/compare_checkpoint_loss.py
+    -> evaluates multiple checkpoints on the same fixed dataset subset
+
+scripts/compare_single_batch_backend.py
+    -> compares the same checkpoint and fixed batch across DirectML/ROCm
+```
+
+These tools separate training-log behavior from checkpoint quality and backend
+numerical behavior. They were used only to close the M5 DirectML diagnosis and are preferred over
+judging backend correctness from training loss alone.

@@ -1,21 +1,11 @@
 # MiniMind --- DirectML Benchmarks
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document records experimental DirectML compatibility and
 performance tests for MiniMind.
@@ -1196,30 +1186,41 @@ training reference.
 
 ------------------------------------------------------------------------
 
-# Final Project-Level DirectML Conclusion — 2026-09-21
+# M5 Final DirectML Cross-Backend Validation — 2026-09-24
 
-The DirectML investigation successfully established device compatibility,
-training-loop execution, memory characteristics, backend workarounds, and a
-large set of regression tests. However, the decisive criterion is model quality,
-not merely finite loss or successful completion of training.
+The final comparison moved beyond training-log loss and evaluated the resulting
+checkpoints on the same data and backend.
 
-The final comparison showed:
+On a fixed `1,000`-sample subset (`204,327` valid tokens), both checkpoints were
+evaluated under ROCm:
 
-``` text
-Official upstream pretrain_768.pth
-    CPU inference       -> coherent
-    DirectML inference  -> coherent
+| Checkpoint | Evaluation loss | Perplexity | Generation |
+|---|---:|---:|---|
+| DirectML-trained | 6.880233 | 972.8529 | incoherent |
+| ROCm-trained | 1.846587 | 6.3382 | coherent |
 
-Locally trained DirectML checkpoints
-    epoch 1             -> incoherent
-    epoch 2             -> incoherent
-```
+A same-checkpoint backend test then used the DirectML-trained checkpoint on one
+fixed batch (`873` valid tokens):
 
-The tokenizer and pretraining dataset were separately checked and did not
-explain the failure. Because the official checkpoint also behaves correctly
-through the same evaluation path, the remaining unresolved issue is attributed
-to the custom DirectML training path used in this project.
+| Execution path | Loss | Result |
+|---|---:|---|
+| DirectML FP16 | 5.733902 | finite but divergent |
+| ROCm FP16 | 6.230469 | reference FP16 behavior |
+| DirectML FP32 | 6.231627 | matches ROCm |
+| ROCm FP32 | 6.231628 | matches DirectML |
+| DirectML FP16 without SDPA | NaN | numerically unstable |
+| ROCm FP16 without SDPA | 6.230469 | stable |
 
-No additional DirectML workaround is retained as the primary direction. The
-DirectML track is therefore closed as a documented feasibility study, and
-MiniMind training development continues with **ROCm**.
+The DirectML FP16 model loss also matched a CPU FP32 cross-entropy recomputation
+from its own logits (`5.733902` vs `5.736305`). The analogous ROCm values were
+`6.230469` vs `6.231570`. Therefore the retained valid-token cross-entropy
+reduction is not the final source of the discrepancy: the logits produced by the
+DirectML FP16 forward path already differ materially.
+
+In FP32, DirectML and ROCm agree to approximately `1e-6`, including loss and
+logit statistics. This isolates the final blocking behavior to the tested
+DirectML FP16 numerical path rather than the checkpoint format, tokenizer,
+dataset, or generic DirectML inference.
+
+**Decision:** this M5 validation closes the DirectML feasibility study. Future
+ROCm work is documented separately.

@@ -1,0 +1,23 @@
+{
+  "label": "ROCm",
+  "device_arg": "cuda:0",
+  "checkpoint": "E:\\workspace\\git_workspace\\minimind\\directml\\out\\pretrain_768.pth",
+  "indices": [
+    233478,
+    52451,
+    576778,
+    513575,
+    468106,
+    292632,
+    214947,
+    1143716
+  ],
+  "valid_tokens": 873,
+  "backend_loss": 6.23046875,
+  "cpu_reference_loss": 6.231570243835449,
+  "loss_difference": -0.0011014938354492188,
+  "logits_mean": -0.924937903881073,
+  "logits_std": 2.253357410430908,
+  "logits_abs_max": 25.203125,
+  "logits_finite_ratio": 1.0
+}

@@ -45,9 +45,28 @@ Locally trained DirectML checkpoints
 
 Tokenizer and dataset checks were clean, and the official upstream checkpoint generated coherently through the same evaluation path.
 
-The unresolved problem was therefore isolated to the custom DirectML training path used in this experiment.
+Final cross-backend tests narrowed the failure further to the tested DirectML
+FP16 numerical path. The same DirectML-trained checkpoint matches ROCm in FP32,
+but diverges materially in FP16.
 
 **DirectML training was abandoned for this project.**
+
+### Final quantitative validation
+
+On the same `1,000` samples (`204,327` valid tokens), evaluated under ROCm:
+
+| Checkpoint | Loss | Perplexity | Generation |
+| --- | ---: | ---: | --- |
+| DirectML-trained | 6.880233 | 972.8529 | incoherent |
+| ROCm-trained | 1.846587 | 6.3382 | coherent |
+
+Using the same DirectML-trained checkpoint and one fixed batch (`873` valid
+tokens), DirectML/ROCm losses were `5.733902 / 6.230469` in FP16 but
+`6.231627 / 6.231628` in FP32. DirectML FP16 without SDPA produced non-finite
+logits.
+
+This rules out checkpoint loading and generic inference as the final explanation
+and isolates the blocking behavior to the tested DirectML FP16 numerical path.
 
 ---
 
@@ -281,9 +300,9 @@ training runs
 
 Backend validation must also include the behavior of the resulting model.
 
-The official MiniMind checkpoint worked through the same inference path on CPU and DirectML, while the locally trained DirectML checkpoints did not produce coherent output after the tested epochs.
+The official MiniMind checkpoint worked through the same inference path on CPU and DirectML, while the locally trained DirectML checkpoints did not produce coherent output. Final FP32 cross-backend tests matched, whereas DirectML FP16 diverged.
 
-For that reason, further training work moved away from DirectML instead of adding more compatibility workarounds.
+For that reason, further training work moved to ROCm instead of adding more DirectML precision workarounds.
 
 ---
 

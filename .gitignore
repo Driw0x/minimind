@@ -41,6 +41,8 @@ htmlcov/
 directml/dataset/*.jsonl
 directml/out/
 directml/checkpoints/
+directml/benchmarks/figures_directml/
+directml/benchmarks/figures_rocm/
 dataset/*.jsonl
 checkpoints/
 out/

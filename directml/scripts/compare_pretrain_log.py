@@ -1,5 +1,4 @@
 import argparse
-import csv
 import re
 from pathlib import Path
 
@@ -129,60 +128,6 @@ def save_line_plot(
     return True
 
 
-def write_summary(runs, output):
-    rows = []
-
-    for label, records in runs.items():
-        if not records:
-            continue
-
-        first = records[0]
-        last = records[-1]
-
-        loss_drop = first["loss"] - last["loss"]
-        loss_drop_pct = (
-            100.0 * loss_drop / first["loss"]
-            if first["loss"] != 0
-            else 0.0
-        )
-
-        rows.append({
-            "run": label,
-            "points": len(records),
-            "first_step": first["global_step"],
-            "last_step": last["global_step"],
-            "steps_per_epoch": last["steps_per_epoch"],
-            "progress_pct": last["progress_pct"],
-            "first_loss": first["loss"],
-            "last_loss": last["loss"],
-            "loss_drop": loss_drop,
-            "loss_drop_pct": loss_drop_pct,
-            "first_lr": first["lr"],
-            "last_lr": last["lr"],
-            "last_eta_min": last["eta_min"],
-        })
-
-    fieldnames = [
-        "run",
-        "points",
-        "first_step",
-        "last_step",
-        "steps_per_epoch",
-        "progress_pct",
-        "first_loss",
-        "last_loss",
-        "loss_drop",
-        "loss_drop_pct",
-        "first_lr",
-        "last_lr",
-        "last_eta_min",
-    ]
-
-    with output.open("w", newline="", encoding="utf-8") as file:
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
 
 def main():
     parser = argparse.ArgumentParser(
@@ -276,36 +221,6 @@ def main():
             False,
         ),
         (
-            "aux_loss_vs_step.png",
-            "global_step",
-            "aux_loss",
-            "Auxiliary loss vs training step",
-            "Training step",
-            "Aux loss",
-            args.smooth,
-            False,
-        ),
-        (
-            "learning_rate_vs_step.png",
-            "global_step",
-            "lr",
-            "Learning rate schedule",
-            "Training step",
-            "Learning rate",
-            1,
-            False,
-        ),
-        (
-            "eta_vs_step.png",
-            "global_step",
-            "eta_min",
-            "Estimated remaining epoch time",
-            "Training step",
-            "ETA (minutes)",
-            1,
-            False,
-        ),
-        (
             "loss_reduction_pct_vs_step.png",
             "global_step",
             "loss",
@@ -342,8 +257,6 @@ def main():
         ):
             generated.append(output)
 
-    summary_path = output_dir / "summary.csv"
-    write_summary(runs, summary_path)
 
     print()
     print("=" * 72)
@@ -370,7 +283,6 @@ def main():
     for path in generated:
         print(f"  {path}")
 
-    print(f"  {summary_path}")
 
 
 if __name__ == "__main__":

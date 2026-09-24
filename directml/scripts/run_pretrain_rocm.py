@@ -19,10 +19,19 @@ OUT_DIR = ROOT_DIR / "out"
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-LOG_FILE = LOG_DIR / "pretrain_768.log"
+# LOG_FILE = LOG_DIR / "pretrain_768.log"
+
+# # Use a distinct save_weight so ROCm never overwrites DirectML artifacts.
+# SAVE_WEIGHT = "pretrain_rocm"
+
+# RESUME_CHECKPOINT = CHECKPOINT_DIR / f"{SAVE_WEIGHT}_768_resume.pth"
+# MODEL_CHECKPOINT = CHECKPOINT_DIR / f"{SAVE_WEIGHT}_768.pth"
+# OUTPUT_MODEL = OUT_DIR / f"{SAVE_WEIGHT}_768.pth"
+
+LOG_FILE = LOG_DIR / "pretrain_768_bf16.log"
 
 # Use a distinct save_weight so ROCm never overwrites DirectML artifacts.
-SAVE_WEIGHT = "pretrain_rocm"
+SAVE_WEIGHT = "pretrain_rocm_bf16"
 
 RESUME_CHECKPOINT = CHECKPOINT_DIR / f"{SAVE_WEIGHT}_768_resume.pth"
 MODEL_CHECKPOINT = CHECKPOINT_DIR / f"{SAVE_WEIGHT}_768.pth"
@@ -93,8 +102,6 @@ command = [
 
     # One complete epoch for DirectML / ROCm comparison.
     "--epochs", "2",
-    "--max_steps", "39695",
-    "--log_interval", "100",
 
     "--save_weight", SAVE_WEIGHT,
 

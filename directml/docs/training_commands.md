@@ -1,21 +1,11 @@
 # MiniMind DirectML --- Historical Training Commands and Checkpoint Resume
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document centralizes the DirectML training commands used during the
 feasibility study and explains how automatic checkpoints and training resume
@@ -25,14 +15,14 @@ are **not the recommended commands for new full training**.
 ## Current recommendation
 
 Do not start a new full MiniMind training run with the DirectML commands below.
-The final locally trained DirectML checkpoints remained incoherent after epoch 1
-and epoch 2, while the official checkpoint generated coherently through the same
-CPU/DirectML evaluation path.
+M5 final checkpoint evaluation confirmed a large quality gap: on the same
+`204,327` tokens, the DirectML-trained checkpoint scored `6.880233` loss /
+`972.8529` perplexity, versus `1.846587` / `6.3382` for the ROCm-trained
+checkpoint.
 
-New training work should use the ROCm environment. ROCm-specific end-to-end
-commands should be documented separately after the baseline is validated rather
-than inferred by mechanically replacing `--device directml:1` in these historical
-commands.
+These commands are retained only for historical reproduction. The DirectML
+roadmap is complete at M5; any ROCm commands belong to the separate active ROCm
+documentation rather than this archive.
 
 ## Trainer configurations
 

@@ -1,0 +1,23 @@
+{
+  "label": "ROCm-FP32",
+  "device_arg": "cuda:0",
+  "checkpoint": "E:\\workspace\\git_workspace\\minimind\\directml\\out\\pretrain_768.pth",
+  "indices": [
+    233478,
+    52451,
+    576778,
+    513575,
+    468106,
+    292632,
+    214947,
+    1143716
+  ],
+  "valid_tokens": 873,
+  "backend_loss": 6.23162841796875,
+  "cpu_reference_loss": 6.231626987457275,
+  "loss_difference": 1.430511474609375e-06,
+  "logits_mean": -0.9249218702316284,
+  "logits_std": 2.2534093856811523,
+  "logits_abs_max": 25.20257568359375,
+  "logits_finite_ratio": 1.0
+}

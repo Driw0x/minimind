@@ -1,21 +1,11 @@
 # MiniMind --- Update Log
 
-> **Project direction update — 2026-09-21**
+> **Historical DirectML archive — updated 2026-09-24**
 >
-> The DirectML work is now retained as a compatibility and feasibility study,
-> not as the active MiniMind training backend. The upstream official
-> `pretrain_768.pth` checkpoint generates coherent text on both CPU and
-> DirectML, while the locally trained DirectML checkpoints remained incoherent
-> after epoch 1 and epoch 2 despite apparently healthy loss and checkpoint
-> diagnostics. This isolates the unresolved problem to the custom DirectML
-> training path rather than the tokenizer, dataset, checkpoint loader, or
-> DirectML inference path.
->
-> Because acceptable pretraining quality could not be obtained reliably with
-> DirectML, the DirectML training track is **abandoned for this project**.
-> Development is moving to **ROCm**. DirectML benchmarks, issues, workarounds,
-> commands, and validation results below are preserved as historical technical
-> evidence unless explicitly stated otherwise.
+> DirectML is no longer the active MiniMind training backend. M5 final validation
+> isolated a numerical divergence specific to the tested DirectML FP16 path.
+> Historical results below are retained for reproducibility and engineering
+> reference; ROCm development is documented separately.
 
 This document provides a chronological record of the main changes made
 to the MiniMind DirectML fork.
@@ -380,8 +370,9 @@ Finalization**.
     Top-1 repeat rates remained below `1%`.
 -   Confirmed through qualitative generation that the historical
     repeated-token collapse did not recur.
--   Retained the epoch-2 checkpoint as the final Dense pretraining base
-    for Full SFT.
+-   Initially retained the epoch-2 checkpoint as a candidate Dense
+    pretraining base, then rejected it after final qualitative and cross-backend
+    model-quality validation.
 -   Compared upstream CUDA mixed precision with the DirectML path and
     confirmed that upstream keeps FP32 model parameters while using BF16
     autocast for compatible compute operations.
@@ -442,11 +433,25 @@ Finalization**.
     commands as historical feasibility-study material.
 
 ------------------------------------------------------------------------
-
-# M6 --- ROCm Migration
-
--   Selected ROCm as the next MiniMind training backend for the AMD GPU.
--   Validated the basic ROCm precision direction with FP16 autocast while
-    retaining FP32 weights and FP32 gradients.
--   Next validation target: reproduce MiniMind pretraining on ROCm and verify
-    checkpoint quality early, before committing to long full-epoch runs.
+-   Trained a ROCm Dense pretraining checkpoint solely as a reference backend for
+    final DirectML validation and confirmed coherent generation.
+-   Evaluated the DirectML- and ROCm-trained checkpoints on the same `1,000`
+    samples (`204,327` valid tokens) under ROCm.
+-   Measured DirectML checkpoint loss `6.880233` / perplexity `972.8529`.
+-   Measured ROCm checkpoint loss `1.846587` / perplexity `6.3382`.
+-   Re-evaluated the DirectML checkpoint under ROCm and confirmed that generation
+    remained incoherent, proving that the degraded behavior is stored in the
+    checkpoint rather than being only a DirectML inference effect.
+-   Compared the same DirectML checkpoint and fixed `873`-token batch across
+    backends: DirectML FP16 loss `5.733902` versus ROCm FP16 `6.230469`.
+-   Repeated the same comparison in FP32: DirectML `6.231627` versus ROCm
+    `6.231628`, with matching logit statistics to approximately `1e-6`.
+-   Confirmed that DirectML FP16 without SDPA produces non-finite logits while
+    ROCm remains stable.
+-   Confirmed that DirectML FP16 model loss matches a CPU FP32 cross-entropy
+    recomputation from the same DirectML logits (`5.733902` vs `5.736305`);
+    therefore the retained cross-entropy reduction is not the remaining cause.
+-   Classified the final blocker as a numerical divergence in the tested
+    DirectML FP16 forward path.
+-   Closed DirectML training work and moved future backend development to a
+    separate ROCm roadmap.
