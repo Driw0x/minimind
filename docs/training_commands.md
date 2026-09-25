@@ -12,20 +12,66 @@ Run trainer commands from:
 cd trainer
 ```
 
-The commands below assume the validated ROCm environment and use `cuda:0`,
-`bfloat16` and `--use_compile 0`.
+---
+
+## Upstream datasets
+
+Official MiniMind training datasets are provided by the upstream project:
+
+- [ModelScope — minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
+- [Hugging Face — minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
+
+Only the required files need to be downloaded and placed in:
+
+```text
+dataset/
+```
+
+Main datasets:
+
+```text
+pretrain_t2t_mini.jsonl   # Mini Pretrain
+pretrain_t2t.jsonl        # Full Pretrain
+
+sft_t2t_mini.jsonl        # Mini SFT
+sft_t2t.jsonl             # Full SFT
+
+dpo.jsonl                 # DPO
+rlaif.jsonl               # GRPO / PPO
+agent_rl.jsonl            # Agent RL
+agent_rl_math.jsonl       # Agent RL math
+```
+
+For quick validation, use the `*_mini.jsonl` datasets.
+
+For full training, use `pretrain_t2t.jsonl` and `sft_t2t.jsonl`.
 
 ---
 
 ## 1. Dense Pretrain
 
+Default dataset:
+
+```text
+../dataset/pretrain_t2t_mini.jsonl
+```
+
+### Mini validation
+
 ```powershell
-python train_pretrain.py --device cuda:0 --dtype bfloat16 --epochs 2 --batch_size 32 --learning_rate 5e-4 --num_workers 8 --accumulation_steps 8 --grad_clip 1.0 --log_interval 100 --save_interval 1000 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 340 --use_moe 0 --from_weight none --use_compile 0
+python train_pretrain.py --save_weight pretrain_mini
+```
+
+### Full training
+
+```powershell
+python train_pretrain.py --data_path ../dataset/pretrain_t2t.jsonl
 ```
 
 Final output:
 
 ```text
+out/pretrain_mini_768.pth
 out/pretrain_768.pth
 ```
 
@@ -39,13 +85,28 @@ Requires:
 out/pretrain_768.pth
 ```
 
+Default dataset:
+
+```text
+../dataset/sft_t2t_mini.jsonl
+```
+
+### Mini validation
+
 ```powershell
-python train_full_sft.py --device cuda:0 --dtype bfloat16 --epochs 2 --batch_size 16 --learning_rate 1e-5 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 100 --save_interval 1000 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 768 --use_moe 0 --from_weight pretrain --use_compile 0
+python train_full_sft.py --save_weight full_sft_mini
+```
+
+### Full training
+
+```powershell
+python train_full_sft.py --data_path ../dataset/sft_t2t.jsonl
 ```
 
 Final output:
 
 ```text
+out/full_sft_mini_768.pth
 out/full_sft_768.pth
 ```
 
@@ -53,8 +114,10 @@ out/full_sft_768.pth
 
 ## 3. MoE Pretrain
 
+Uses the same Pretrain defaults, with MoE enabled.
+
 ```powershell
-python train_pretrain.py --device cuda:0 --dtype bfloat16 --epochs 2 --batch_size 32 --learning_rate 5e-4 --num_workers 8 --accumulation_steps 8 --grad_clip 1.0 --log_interval 100 --save_interval 1000 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 340 --use_moe 1 --from_weight none --use_compile 0
+python train_pretrain.py --use_moe 1 --data_path ../dataset/pretrain_t2t.jsonl
 ```
 
 Final output:
@@ -63,7 +126,8 @@ Final output:
 out/pretrain_768_moe.pth
 ```
 
-If VRAM is insufficient, reduce `batch_size` and increase `accumulation_steps`.
+If VRAM is insufficient, reduce `batch_size` and increase
+`accumulation_steps` accordingly.
 
 ---
 
@@ -76,7 +140,7 @@ out/pretrain_768_moe.pth
 ```
 
 ```powershell
-python train_full_sft.py --device cuda:0 --dtype bfloat16 --epochs 2 --batch_size 16 --learning_rate 1e-5 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 100 --save_interval 1000 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 768 --use_moe 1 --from_weight pretrain --use_compile 0
+python train_full_sft.py --use_moe 1 --data_path ../dataset/sft_t2t.jsonl
 ```
 
 Final output:
@@ -91,9 +155,69 @@ out/full_sft_768_moe.pth
 
 Requires Dense Full SFT.
 
-```powershell
-python train_lora.py --device cuda:0 --dtype bfloat16 --epochs 10 --batch_size 32 --learning_rate 1e-4 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 10 --save_interval 1000 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 340 --use_moe 0 --from_weight full_sft --use_compile 0
+Default configuration already uses:
+
+```text
+base weight: full_sft
+dataset: lora_medical.jsonl
+Dense model
 ```
+
+### Training
+
+```powershell
+python train_lora.py
+```
+
+Final output:
+
+```text
+out/lora_medical_768.pth
+```
+
+### Evaluation
+
+LoRA is evaluated together with its base model.
+
+The `--weight` value must match the base model used during LoRA training.
+
+```powershell
+python eval_llm.py --weight full_sft --lora_weight lora_medical
+```
+
+Example with another LoRA adapter:
+
+```powershell
+python eval_llm.py --weight full_sft --lora_weight lora_identity
+```
+
+This keeps the general capabilities of the base model while applying the
+domain-specific behavior learned by the LoRA adapter.
+
+### Merge
+
+A LoRA adapter can optionally be merged back into its base model to produce
+a standalone full-model checkpoint.
+
+Use:
+
+```text
+scripts/convert_model.py
+```
+
+with:
+
+```text
+convert_merge_base_lora
+```
+
+### Full fine-tuning alternative
+
+With sufficient domain data, full-parameter SFT can be used instead of LoRA.
+
+Domain data should be mixed carefully with general-purpose data to reduce the
+risk of overfitting the specialized domain and degrading the model's general
+capabilities.
 
 ---
 
@@ -101,8 +225,22 @@ python train_lora.py --device cuda:0 --dtype bfloat16 --epochs 10 --batch_size 3
 
 Requires Dense Full SFT.
 
+Default configuration:
+
+```text
+base weight: full_sft
+dataset: dpo.jsonl
+beta: 0.15
+```
+
 ```powershell
-python train_dpo.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 4 --learning_rate 4e-8 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 100 --save_interval 100 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 1024 --use_moe 0 --beta 0.15 --from_weight full_sft --use_compile 0
+python train_dpo.py
+```
+
+Final output:
+
+```text
+out/dpo_768.pth
 ```
 
 ---
@@ -118,8 +256,25 @@ out/full_sft_768.pth
 out/full_sft_768_moe.pth
 ```
 
+Default configuration:
+
+```text
+student: Dense Full SFT
+teacher: MoE Full SFT
+student hidden size: 768
+teacher hidden size: 768
+alpha: 0.5
+temperature: 1.5
+```
+
 ```powershell
-python train_distillation.py --device cuda:0 --dtype bfloat16 --epochs 6 --batch_size 32 --learning_rate 5e-6 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 100 --save_interval 100 --max_seq_len 340 --student_hidden_size 768 --student_num_layers 8 --student_use_moe 0 --from_student_weight full_sft --teacher_hidden_size 768 --teacher_num_layers 8 --teacher_use_moe 1 --from_teacher_weight full_sft --use_compile 0
+python train_distillation.py --data_path ../dataset/sft_t2t.jsonl
+```
+
+Final output:
+
+```text
+out/full_dist_768.pth
 ```
 
 ---
@@ -128,8 +283,25 @@ python train_distillation.py --device cuda:0 --dtype bfloat16 --epochs 6 --batch
 
 Requires Dense Full SFT.
 
+Default configuration:
+
+```text
+base weight: full_sft
+dataset: rlaif.jsonl
+loss: cispo
+num_generations: 6
+beta: 0.1
+rollout engine: torch
+```
+
 ```powershell
-python train_grpo.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2 --learning_rate 3e-7 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 1 --save_interval 10 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 768 --max_gen_len 1024 --use_moe 0 --num_generations 6 --beta 0.1 --loss_type cispo --from_weight full_sft --use_compile 0
+python train_grpo.py
+```
+
+Final output:
+
+```text
+out/grpo_768.pth
 ```
 
 ---
@@ -138,8 +310,25 @@ python train_grpo.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2 
 
 Requires Dense Full SFT.
 
+Default configuration:
+
+```text
+base weight: full_sft
+dataset: rlaif.jsonl
+actor learning rate: 3e-7
+critic learning rate: 5e-7
+mini batch size: 2
+rollout engine: torch
+```
+
 ```powershell
-python train_ppo.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2 --learning_rate 3e-7 --critic_learning_rate 5e-7 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 1 --save_interval 10 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 768 --max_gen_len 1024 --use_moe 0 --mini_batch_size 2 --from_weight full_sft --use_compile 0
+python train_ppo.py
+```
+
+Final output:
+
+```text
+out/ppo_actor_768.pth
 ```
 
 ---
@@ -148,8 +337,28 @@ python train_ppo.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2 -
 
 Requires Dense Full SFT.
 
+Default configuration:
+
+```text
+base weight: full_sft
+dataset: agent_rl.jsonl
+loss: cispo
+num_generations: 4
+beta: 0.1
+max sequence length: 1024
+max generation length: 768
+max total length: 2500
+rollout engine: torch
+```
+
 ```powershell
-python train_agent.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2 --learning_rate 3e-7 --num_workers 8 --accumulation_steps 1 --grad_clip 1.0 --log_interval 1 --save_interval 10 --hidden_size 768 --num_hidden_layers 8 --max_seq_len 1024 --max_gen_len 768 --max_total_len 2500 --use_moe 0 --num_generations 4 --beta 0.1 --loss_type cispo --from_weight full_sft --use_compile 0
+python train_agent.py
+```
+
+Final output:
+
+```text
+out/agent_768.pth
 ```
 
 ---
@@ -158,10 +367,24 @@ python train_agent.py --device cuda:0 --dtype bfloat16 --epochs 1 --batch_size 2
 
 Resume only an interrupted run of the **same stage and dataset**.
 
-Use the exact same command and add:
+Use the same command and add:
 
 ```text
 --from_resume 1
+```
+
+Examples:
+
+```powershell
+python train_pretrain.py --from_resume 1
+```
+
+```powershell
+python train_pretrain.py --data_path ../dataset/pretrain_t2t.jsonl --from_resume 1
+```
+
+```powershell
+python train_full_sft.py --data_path ../dataset/sft_t2t.jsonl --from_resume 1
 ```
 
 Keep unchanged:
@@ -177,19 +400,19 @@ checkpoint name
 
 Resume checkpoints:
 
-| Trainer        | Checkpoint                                |
-| -------------- | ----------------------------------------- |
-| Dense Pretrain | `checkpoints/pretrain_768_resume.pth`     |
-| Dense Full SFT | `checkpoints/full_sft_768_resume.pth`     |
-| MoE Pretrain   | `checkpoints/pretrain_768_moe_resume.pth` |
-| MoE Full SFT   | `checkpoints/full_sft_768_moe_resume.pth` |
-| LoRA           | `checkpoints/lora_medical_768_resume.pth` |
-| Distillation   | `checkpoints/full_dist_768_resume.pth`    |
-| GRPO           | `checkpoints/grpo_768_resume.pth`         |
-| PPO            | `checkpoints/ppo_actor_768_resume.pth`    |
-| Agent RL       | `checkpoints/agent_768_resume.pth`        |
+| Trainer | Checkpoint |
+| --- | --- |
+| Dense Pretrain | `checkpoints/pretrain_768_resume.pth` |
+| Dense Full SFT | `checkpoints/full_sft_768_resume.pth` |
+| MoE Pretrain | `checkpoints/pretrain_768_moe_resume.pth` |
+| MoE Full SFT | `checkpoints/full_sft_768_moe_resume.pth` |
+| LoRA | `checkpoints/lora_medical_768_resume.pth` |
+| Distillation | `checkpoints/full_dist_768_resume.pth` |
+| GRPO | `checkpoints/grpo_768_resume.pth` |
+| PPO | `checkpoints/ppo_actor_768_resume.pth` |
+| Agent RL | `checkpoints/agent_768_resume.pth` |
 
-Check:
+Check available resume checkpoints with:
 
 ```powershell
 Get-ChildItem ..\checkpoints\*_resume.pth
