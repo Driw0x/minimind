@@ -12,6 +12,50 @@ Run trainer commands from:
 cd trainer
 ```
 
+### GPU selection with integrated graphics
+
+On systems where the CPU also provides an integrated AMD GPU, ROCm/PyTorch may expose
+the integrated GPU as `cuda:0` and the dedicated Radeon GPU as another device.
+
+Check the detected devices before starting training:
+
+```powershell
+python -c "import torch; print('device_count:', torch.cuda.device_count()); [print(i, torch.cuda.get_device_name(i)) for i in range(torch.cuda.device_count())]"
+```
+
+Example:
+
+```text
+0 AMD Radeon(TM) Graphics
+1 AMD Radeon RX 7800 XT
+```
+
+If the dedicated GPU is device `1`, select it before launching MiniMind:
+
+```powershell
+$env:HIP_VISIBLE_DEVICES="1"
+```
+
+Then verify the visible device:
+
+```powershell
+python -c "import torch; print(torch.cuda.device_count()); print(torch.cuda.get_device_name(0))"
+```
+
+Expected result:
+
+```text
+1
+AMD Radeon RX 7800 XT
+```
+
+After `HIP_VISIBLE_DEVICES` filters the devices, the selected dedicated GPU becomes
+`cuda:0` inside the Python process. Trainer commands should therefore continue to use
+`--device cuda:0` when this environment variable is active.
+
+`HIP_VISIBLE_DEVICES` applies to the current PowerShell session. Set it again when
+opening a new terminal if the integrated GPU would otherwise be selected.
+
 ---
 
 ## Upstream datasets
