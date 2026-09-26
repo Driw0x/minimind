@@ -42,18 +42,20 @@ Validate Full SFT on ROCm from the retained M1 checkpoint.
 
 ### Training
 
-- [ ] Validate ROCm execution with a short Full SFT run
-- [ ] Confirm finite and decreasing loss
-- [ ] Save and reload the validation checkpoint
-- [ ] Complete Full SFT
-- [ ] Save the final Full SFT checkpoint
+- [x] Validate ROCm execution with a short Full SFT run
+- [x] Confirm finite and decreasing loss
+- [x] Save and reload the validation checkpoint
+- [x] Complete Full SFT
+- [x] Save the final Full SFT checkpoint
 
 ### Evaluation
 
-- [ ] Load the final checkpoint with `eval_llm.py`
-- [ ] Run the upstream automatic test mode (`[0] 自动测试`)
-- [ ] Confirm coherent instruction-following across the built-in prompts
-- [ ] Compare with the M1 pretraining checkpoint on the same prompts
+- [x] Load the final checkpoint with `eval_llm.py`
+- [x] Run the upstream automatic test mode (`[0] 自动测试`)
+- [x] Confirm coherent and stable responses across the built-in prompts
+- [ ] Confirm reliable factual accuracy and reasoning
+- [ ] Confirm consistent instruction following
+- [x] Compare with the M1 pretraining checkpoint on the same prompts
 
 **Output:** retained Dense Full SFT checkpoint for downstream stages.
 
