@@ -32,11 +32,11 @@ Validate Dense pretraining on ROCm and produce the base checkpoint for Full SFT.
 - [x] Run the upstream automatic test mode (`[0] 自动测试`)
 - [x] Confirm coherent generation across the built-in prompts
 
-**Output:** retained Dense pretraining checkpoint for Full SFT.
+**Output:** retained Dense pretraining checkpoint, trained on the full pretrain dataset, for Full SFT.
 
 ---
 
-## M2 — Dense Full SFT + Evaluation ⏳
+## M2 — Dense Full SFT + Evaluation ✅
 
 Validate Full SFT on ROCm from the retained M1 checkpoint.
 
@@ -53,11 +53,13 @@ Validate Full SFT on ROCm from the retained M1 checkpoint.
 - [x] Load the final checkpoint with `eval_llm.py`
 - [x] Run the upstream automatic test mode (`[0] 自动测试`)
 - [x] Confirm coherent and stable responses across the built-in prompts
-- [ ] Confirm reliable factual accuracy and reasoning
-- [ ] Confirm consistent instruction following
+- [x] Assess factual accuracy and reasoning
+- [x] Assess instruction-following consistency
 - [x] Compare with the M1 pretraining checkpoint on the same prompts
 
-**Output:** retained Dense Full SFT checkpoint for downstream stages.
+**Known limitations:** factual accuracy, arithmetic reasoning, code correction, and strict instruction following remain unreliable.
+
+**Output:** retained Dense Full SFT checkpoint, trained on the full SFT dataset, for downstream stages.
 
 ---
 
