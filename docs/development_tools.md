@@ -86,7 +86,7 @@ Generation is deterministic (`do_sample=False`). For each response, the tool rep
 
 The repetition ratio is only a degeneration indicator. Factual correctness, reasoning, code correctness, and instruction following still require manual review.
 
-### Current reference results
+### Reference results
 
 Model configuration:
 
@@ -113,7 +113,7 @@ SFT average input/supervised tokens     : 478.06 / 402.80
 
 These values are sample-dependent diagnostics, not corpus-wide token-count estimates.
 
-Random local validation (`seed=42`, 256 samples per dataset) produced:
+Historical Mini-checkpoint validation (`seed=42`, 256 samples per dataset) produced:
 
 | Weight | Pretrain loss | SFT loss |
 | --- | ---: | ---: |
@@ -129,7 +129,7 @@ SFT loss delta     : -0.9543
 
 Interpretation: Full SFT substantially improves fit to the SFT distribution while causing moderate forgetting on the pretraining distribution.
 
-The external benchmark previously produced:
+The Mini-checkpoint external benchmark produced:
 
 ```text
 pretrain average generated tokens: 246.8
@@ -141,9 +141,47 @@ full_sft average repetition      : 0.361
 
 Full SFT therefore improved generation stability and reduced severe repetition, while factual accuracy and reasoning remained limited on several prompts.
 
+### Current Dense full-data checkpoints
+
+The current retained Dense checkpoints were trained on the complete T2T datasets:
+
+```text
+pretrain_768.pth  -> pretrain_t2t.jsonl
+full_sft_768.pth -> sft_t2t.jsonl
+```
+
+`diagnose_validation.py` still uses the Mini datasets by default as fixed reference
+sets unless different paths are passed explicitly.
+
+Current validation (`seed=42`, 256 samples per reference dataset):
+
+| Weight | Pretrain reference loss | SFT reference loss |
+| --- | ---: | ---: |
+| `pretrain` | 1.6372 | 2.8685 |
+| `full_sft` | 1.8730 | 1.3771 |
+
+Relative to `pretrain`:
+
+```text
+Pretrain loss delta: +0.2358
+SFT loss delta     : -1.4913
+```
+
+The current Full SFT deterministic external benchmark produced:
+
+```text
+average generated tokens: 213.5
+average repetition      : 0.244
+```
+
+The Full Pretrain external repetition average is not retained as a reliable metric
+because several generations reached the token limit but decoded to an empty visible
+response.
+
+
 ### Baseline status
 
-The current `full_sft_768.pth` checkpoint is the validated experimental baseline for the next runtime-memory milestone. The diagnostics show that:
+The current `full_sft_768.pth` checkpoint is the retained Dense Full SFT baseline trained on the complete SFT dataset. The diagnostics show that:
 
 - the checkpoint loads and evaluates correctly on ROCm;
 - SFT improves fit to the SFT distribution;
@@ -266,6 +304,25 @@ The estimated global truncation rate is roughly 5–6%, but blocks 1 and 6 are m
 
 Duplicate prompts/responses are particularly frequent in the tool-heavy blocks. These duplicates should not be removed blindly because repeated tool templates can be legitimate.
 
+### Full SFT training dataset
+
+The complete `sft_t2t.jsonl` contains 5,099,432 samples. The block scan shows a much
+heavier long-context distribution than the Mini SFT dataset.
+
+Weighted estimates from the 100,000-line block analysis:
+
+```text
+Single-turn share        : ~81.6%
+Tool-conversation share  : ~7.7%
+Mean conversation length : ~826.8 tokens
+Truncated at 768         : ~34.3%
+```
+
+Several later blocks exceed 50% truncation at `max_seq_len=768`, with some blocks
+approaching 100%. These values are block-sample estimates rather than exact
+corpus-wide tokenization statistics.
+
+
 ### Training-order note
 
 The trainer does not consume the JSONL sequentially in normal training. It uses shuffled indices (`torch.randperm`) in non-distributed training and `DistributedSampler` with `set_epoch` in distributed training.
@@ -279,6 +336,13 @@ Full SFT audit:
 ```powershell
 python -m scripts.diagnose_sft --data dataset/sft_t2t_mini.jsonl --tokenizer model --mode all --samples 5000 --first_samples 5000 --block_size 100000 --sample_per_block 2000 --max_seq_len 768
 ```
+
+Full training-dataset audit:
+
+```powershell
+python -m scripts.diagnose_sft --data dataset/sft_t2t.jsonl --tokenizer model --mode all --samples 5000 --first_samples 5000 --block_size 100000 --sample_per_block 2000 --max_seq_len 768
+```
+
 
 Detailed sample analysis only:
 

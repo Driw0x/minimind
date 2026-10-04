@@ -8,8 +8,8 @@ The comparison currently covers:
 
 - Mini Pretrain checkpoint
 - Mini Full SFT checkpoint
-
-The same evaluation will later be repeated with models trained on the complete datasets.
+- Full Pretrain checkpoint
+- Full SFT checkpoint
 
 This document evaluates model outputs only. It does not introduce new inference features or modify the training pipeline.
 
@@ -21,8 +21,8 @@ This document evaluates model outputs only. It does not introduce new inference 
 | --- | --- | --- |
 | Mini Pretrain | Mini pretraining dataset | Evaluated |
 | Mini Full SFT | Mini pretraining + Mini SFT datasets | Evaluated |
-| Full Pretrain | Complete pretraining dataset | Planned |
-| Full SFT | Complete pretraining + SFT datasets | Planned |
+| Full Pretrain | Complete pretraining dataset | Evaluated |
+| Full SFT | Complete pretraining + SFT datasets | Evaluated |
 
 The current Mini models contain approximately:
 
@@ -45,6 +45,21 @@ Current validation measurements:
 The Full SFT checkpoint therefore shows a clear improvement on the SFT objective and substantially less repetitive generation.
 
 The slightly higher loss on pretraining data after SFT is expected to be interpreted separately from generation quality.
+
+### Full-data Dense reference
+
+The current Dense checkpoints were trained on the complete T2T datasets and evaluated
+on the same Mini reference datasets (`seed=42`, 256 samples each):
+
+| Metric | Full Pretrain | Full SFT |
+| --- | ---: | ---: |
+| Loss on pretrain reference | 1.6372 | 1.8730 |
+| Loss on SFT reference | 2.8685 | 1.3771 |
+| External repetition | Not retained as reliable | 0.244 |
+
+The Full Pretrain repetition aggregate is not retained because several generations
+reached the token limit while decoding to an empty visible response.
+
 
 ---
 
@@ -173,48 +188,45 @@ Mini Full SFT
 
 # Full-dataset evaluation
 
-The next comparison will repeat the same evaluation after training on the complete MiniMind datasets.
+The same evaluation protocol has now been run on the Dense checkpoints trained on the
+complete MiniMind T2T datasets.
 
-The target comparison will be:
+## Full Pretrain
 
-```text
-Mini Pretrain
-Mini Full SFT
-Full Pretrain
-Full SFT
-```
+The Full Pretrain checkpoint is more coherent in the upstream automatic test than the
+Mini Pretrain checkpoint and reaches a lower pretrain reference loss (`1.6372` vs
+`1.8275`).
 
-The purpose is to determine whether the limitations currently observed are primarily associated with the reduced Mini datasets.
+It still shows repetition, continuation drift, factual inaccuracies, and limited
+instruction-following behavior, which is expected before SFT.
 
----
+## Full SFT
 
-## Evaluation protocol
+The Full SFT checkpoint produces coherent and stable assistant-style responses and
+improves SFT reference loss from `2.8685` to `1.3771`.
 
-For each full-data checkpoint:
+Its deterministic external repetition metric is `0.244`.
 
-1. load the checkpoint with the same inference script used for the Mini models;
-2. run the upstream automatic test mode;
-3. preserve the generated outputs;
-4. evaluate the same qualitative criteria;
-5. collect the same quantitative diagnostics where available;
-6. compare against the corresponding Mini checkpoint.
+Manual review still shows known limitations:
 
-The test prompts and generation parameters should remain unchanged whenever possible.
+- factual accuracy remains unreliable;
+- arithmetic reasoning can fail;
+- code correction can remain incorrect;
+- strict instruction following is imperfect.
 
----
+The complete SFT dataset therefore improves assistant behavior and stability, but does
+not make the 63.91M model reliably factual or reasoning-correct.
 
-## Future comparison
+## Current comparison
 
-| Criterion | Mini Pretrain | Full Pretrain | Mini Full SFT | Full Full SFT |
+| Criterion | Mini Pretrain | Full Pretrain | Mini Full SFT | Full SFT |
 | --- | --- | --- | --- | --- |
-| Instruction following | Weak | TBD | Improved | TBD |
-| Conversational structure | Weak | TBD | Improved | TBD |
-| Repetition | High | TBD | Lower | TBD |
-| Factual reliability | Limited | TBD | Limited | TBD |
-| Reasoning quality | Limited | TBD | Limited | TBD |
-| Overall output stability | Weak | TBD | Improved | TBD |
-
-The `TBD` values should only be replaced after the full-data checkpoints have been trained and evaluated.
+| Instruction following | Weak | Still limited | Improved | Improved but imperfect |
+| Conversational structure | Weak | Improved | Improved | Improved |
+| Repetition | High | Still present | Lower | Low |
+| Factual reliability | Limited | Limited | Limited | Still limited |
+| Reasoning quality | Limited | Limited | Limited | Still limited |
+| Overall output stability | Weak | Improved | Improved | Improved |
 
 ---
 
@@ -231,9 +243,9 @@ The `TBD` values should only be replaced after the full-data checkpoints have be
 
 ## Full-data models
 
-- [ ] Complete Full Pretrain training
-- [ ] Evaluate Full Pretrain with upstream automatic tests
-- [ ] Complete Full SFT training
-- [ ] Evaluate Full SFT with upstream automatic tests
-- [ ] Compare Mini and full-data checkpoints
-- [ ] Document whether factual accuracy, reasoning and generation quality improve with the complete datasets
+- [x] Complete Full Pretrain training
+- [x] Evaluate Full Pretrain with upstream automatic tests
+- [x] Complete Full SFT training
+- [x] Evaluate Full SFT with upstream automatic tests
+- [x] Compare Mini and full-data checkpoints
+- [x] Document whether factual accuracy, reasoning and generation quality improve with the complete datasets

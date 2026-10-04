@@ -19,11 +19,11 @@ The objective is not to redesign MiniMind. The objective is to keep the upstream
 
 The current priorities are:
 
-- validate MiniMind pretraining with ROCm on Windows;
+- keep the validated Dense Pretrain and Full SFT checkpoints as reference baselines;
 - validate checkpoint quality early, not only successful execution;
 - keep ROCm-specific changes minimal and isolated;
 - preserve compatibility with the upstream MiniMind structure;
-- validate Full SFT after pretraining is stable.
+- validate the MoE training path against the Dense baseline.
 
 Project planning and reproducible training commands are documented separately
 under [`docs/`](docs/).
@@ -197,6 +197,12 @@ Documentation is split by responsibility:
   stage dependencies and validation criteria;
 - [`docs/training_commands.md`](docs/training_commands.md) — reproducible trainer
   commands, checkpoint outputs and resume usage;
+
+- [`docs/development_tools.md`](docs/development_tools.md) — diagnostic tools and
+  reference results;
+- [`docs/generation_quality.md`](docs/generation_quality.md) — checkpoint generation
+  quality comparisons;
+- [`docs/memory.md`](docs/memory.md) — runtime-memory design and evaluation plan;
 - [`docs/original/`](docs/original/) — preserved upstream MiniMind documentation.
 
 ---
@@ -211,6 +217,9 @@ minimind/
 ├── docs/                     # Project documentation
 │   ├── roadmap.md            # Active milestones and validation plan
 │   ├── training_commands.md  # Reproducible training commands
+│   ├── development_tools.md  # Diagnostic tools and reference results
+│   ├── generation_quality.md # Checkpoint generation-quality comparisons
+│   ├── memory.md             # Runtime-memory design and evaluation plan
 │   └── original/             # Original MiniMind documentation
 │
 ├── images/                   # Original project images/resources
