@@ -1,5 +1,10 @@
 # Model Output Quality
 
+[English](generation_quality.md) | [Français](generation_quality.fr.md) | [简体中文](generation_quality.zh-CN.md)
+
+[Project README](../README.md)
+
+
 ## Objective
 
 Document and compare the generation quality of MiniMind checkpoints using the automatic test prompts provided by the upstream project.

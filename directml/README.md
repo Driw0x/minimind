@@ -1,5 +1,8 @@
 # MiniMind DirectML — Archived Experiment
 
+[English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
+
+
 > **Archived / historical**
 >
 > This directory contains the former Windows + DirectML adaptation of MiniMind.
@@ -205,7 +208,7 @@ Some operations required CPU fallback or alternative implementations. A known ex
 
 The detailed findings are preserved in:
 
-- [DirectML limitations](docs/directml_limitations.md)
+- [DirectML limitations](docs/directml_issues.md#current-directml-limitations)
 - [DirectML issues](docs/directml_issues.md)
 - [DirectML benchmarks](docs/directml_benchmarks.md)
 - [DirectML audit](docs/directml_audit.md)
@@ -255,7 +258,7 @@ Local checkpoints and generated artifacts may not be tracked by Git depending on
 
 ### DirectML compatibility
 
-- [DirectML limitations](docs/directml_limitations.md) — unsupported operations, compatibility constraints and CPU fallbacks.
+- [DirectML limitations](docs/directml_issues.md#current-directml-limitations) — unsupported operations, compatibility constraints and CPU fallbacks.
 - [DirectML issues](docs/directml_issues.md) — problems encountered during development, investigations and decisions.
 - [DirectML benchmarks](docs/directml_benchmarks.md) — experimental compatibility and performance results.
 - [DirectML audit](docs/directml_audit.md) — audit of CUDA-specific code and DirectML compatibility concerns.

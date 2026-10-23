@@ -1,5 +1,10 @@
 # Development Tools
 
+[English](development_tools.md) | [Français](development_tools.fr.md) | [简体中文](development_tools.zh-CN.md)
+
+[Project README](../README.md)
+
+
 ## Purpose
 
 MiniMind now uses two diagnostic programs for model and dataset validation:

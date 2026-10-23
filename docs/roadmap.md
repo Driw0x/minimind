@@ -1,5 +1,10 @@
 # MiniMind ROCm Roadmap
 
+[English](roadmap.md) | [Français](roadmap.fr.md) | [简体中文](roadmap.zh-CN.md)
+
+[Project README](../README.md)
+
+
 This roadmap tracks the validation of the upstream MiniMind training pipeline on Windows with AMD ROCm.
 
 For reproducible training commands and checkpoint resume syntax, see

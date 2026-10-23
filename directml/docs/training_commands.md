@@ -1,5 +1,10 @@
 # MiniMind DirectML --- Historical Training Commands and Checkpoint Resume
 
+[English](training_commands.md) | [Français](training_commands.fr.md) | [简体中文](training_commands.zh-CN.md)
+
+[Project README](../../README.md)
+
+
 > **Historical DirectML archive — updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation

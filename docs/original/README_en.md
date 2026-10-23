@@ -1,3 +1,7 @@
+[English](README_en.md) | [简体中文](README.md) | [Français](README.fr.md)
+
+[Project README](../../README.md)
+
 <div align="center">
 
 ![logo](../../images/logo.png)
@@ -8,7 +12,7 @@
 
 ![visitors](https://visitor-badge.laobi.icu/badge?page_id=jingyaogong/minimind)
 [![GitHub Repo stars](https://img.shields.io/github/stars/jingyaogong/minimind?style=social)](https://github.com/jingyaogong/minimind/stargazers)
-[![GitHub Code License](https://img.shields.io/github/license/jingyaogong/minimind)](LICENSE)
+[![GitHub Code License](https://img.shields.io/github/license/jingyaogong/minimind)](../../LICENSE)
 [![GitHub last commit](https://img.shields.io/github/last-commit/jingyaogong/minimind)](https://github.com/jingyaogong/minimind/commits/master)
 [![GitHub pull request](https://img.shields.io/badge/PRs-welcome-blue)](https://github.com/jingyaogong/minimind/pulls)
 [![Collection](https://img.shields.io/badge/🤗-MiniMind%20%20Collection-blue)](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5)
@@ -219,7 +223,7 @@ After this update, maintenance for the entire `minimind-v1` series will be disco
 * Ubuntu==20.04
 * CUDA==12.2
 * Python==3.10.16
-* [requirements.txt](./requirements.txt)
+* [requirements.txt](../../requirements.txt)
 
 </details>
 
@@ -569,7 +573,7 @@ The `minimind-3` series structure is shown below:
 ![structure](./images/LLM-structure.jpg)
 ![structure-moe](./images/LLM-structure-moe.jpg)
 
-To modify model configuration, see [./model/model_minimind.py](./model/model_minimind.py). Reference model parameter versions are shown in the table below:
+To modify model configuration, see [./model/model_minimind.py](../../model/model_minimind.py). Reference model parameter versions are shown in the table below:
 
 | Model Name | params | len_vocab | max_pos | rope_theta | n_layers | d_model | kv_heads | q_heads | note |
 |------------|--------|-----------|---------|------------|----------|---------|----------|---------|------|
@@ -1616,13 +1620,13 @@ What this experiment suggests is simple: for this kind of benchmark, the bottlen
 
 ## 🔧 Model Conversion
 
-* [./scripts/convert_model.py](./scripts/convert_model.py) can be used for conversion between `torch` and `transformers` model formats.
+* [./scripts/convert_model.py](../../scripts/convert_model.py) can be used for conversion between `torch` and `transformers` model formats.
 * Unless otherwise specified, models released from the mainline `MiniMind` series are usually provided in `Transformers` format. If you use native `torch` weights, please run `torch2transformers` conversion first.
 
 
 ## 🖥️ API Service Interface Based on MiniMind
 
-* [./scripts/serve_openai_api.py](./scripts/serve_openai_api.py) provides a lightweight chat service compatible with the OpenAI API, making it easy to connect your own models to third-party UIs such as FastGPT, OpenWebUI, Dify, etc.
+* [./scripts/serve_openai_api.py](../../scripts/serve_openai_api.py) provides a lightweight chat service compatible with the OpenAI API, making it easy to connect your own models to third-party UIs such as FastGPT, OpenWebUI, Dify, etc.
 * The API server additionally supports fields such as `reasoning_content`, `tool_calls`, and `open_thinking`, making it suitable for Tool Calling / Thinking scenarios.
 
 * After downloading model weights from [HuggingFace](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5), the directory structure example is as follows:
@@ -1981,4 +1985,4 @@ If `MiniMind` has been helpful to your research or work, feel free to cite:
 
 # ⚖️ License
 
-This project is open-sourced under the [Apache License 2.0](LICENSE).
+This project is open-sourced under the [Apache License 2.0](../../LICENSE).

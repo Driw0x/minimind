@@ -1,5 +1,8 @@
 # MiniMind ROCm — Training Commands
 
+[English](training_commands.md) | [Français](training_commands.fr.md) | [简体中文](training_commands.zh-CN.md)
+
+
 Environment setup and ROCm/PyTorch device semantics are documented in the root
 [`README.md`](../README.md).
 

@@ -1,5 +1,8 @@
 # MiniMind ROCm Windows
 
+[English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
+
+
 A Windows + AMD ROCm adaptation of [MiniMind](https://github.com/jingyaogong/minimind).
 
 This fork keeps the original MiniMind project structure as close to upstream as possible while validating native AMD GPU training on Windows through ROCm and PyTorch.
@@ -202,7 +205,7 @@ Documentation is split by responsibility:
   reference results;
 - [`docs/generation_quality.md`](docs/generation_quality.md) — checkpoint generation
   quality comparisons;
-- [`docs/memory.md`](docs/memory.md) — runtime-memory design and evaluation plan;
+- `docs/memory.md` (document absent from this snapshot) — runtime-memory design and evaluation plan;
 - [`docs/original/`](docs/original/) — preserved upstream MiniMind documentation.
 
 ---
@@ -292,3 +295,10 @@ This fork focuses on adapting and validating that project for native Windows tra
 This fork retains the license of the original MiniMind project.
 
 See [LICENSE](LICENSE) for the applicable license terms.
+
+<!-- multilingual-documentation -->
+
+## Additional documentation
+
+- [dataset/dataset.md](dataset/dataset.md)
+- [directml/dataset/dataset.md](directml/dataset/dataset.md)

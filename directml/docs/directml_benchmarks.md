@@ -1,5 +1,10 @@
 # MiniMind --- DirectML Benchmarks
 
+[English](directml_benchmarks.md) | [Français](directml_benchmarks.fr.md) | [简体中文](directml_benchmarks.zh-CN.md)
+
+[Project README](../../README.md)
+
+
 > **Historical DirectML archive — updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation

@@ -1,5 +1,10 @@
 # MiniMind --- DirectML Technical Issues
 
+[English](directml_issues.md) | [Français](directml_issues.fr.md) | [简体中文](directml_issues.zh-CN.md)
+
+[Project README](../../README.md)
+
+
 > **Historical DirectML archive — updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation

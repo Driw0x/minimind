@@ -1,5 +1,10 @@
 # MiniMind --- Update Log
 
+[English](update_log.md) | [Français](update_log.fr.md) | [简体中文](update_log.zh-CN.md)
+
+[Project README](../../README.md)
+
+
 > **Historical DirectML archive — updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation

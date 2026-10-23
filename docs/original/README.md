@@ -1,3 +1,7 @@
+[English](README_en.md) | [简体中文](README.md) | [Français](README.fr.md)
+
+[项目 README](../../README.zh-CN.md)
+
 <div align="center">
 
 ![logo](../../images/logo.png)
@@ -8,7 +12,7 @@
 
 ![visitors](https://visitor-badge.laobi.icu/badge?page_id=jingyaogong/minimind)
 [![GitHub Repo stars](https://img.shields.io/github/stars/jingyaogong/minimind?style=social)](https://github.com/jingyaogong/minimind/stargazers)
-[![GitHub Code License](https://img.shields.io/github/license/jingyaogong/minimind)](LICENSE)
+[![GitHub Code License](https://img.shields.io/github/license/jingyaogong/minimind)](../../LICENSE)
 [![GitHub last commit](https://img.shields.io/github/last-commit/jingyaogong/minimind)](https://github.com/jingyaogong/minimind/commits/master)
 [![GitHub pull request](https://img.shields.io/badge/PRs-welcome-blue)](https://github.com/jingyaogong/minimind/pulls)
 [![Collection](https://img.shields.io/badge/🤗-MiniMind%20%20Collection-blue)](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5)
@@ -27,7 +31,7 @@
 
 <div align="center">
 
-中文 | [English](./README_en.md)
+中文 | [English](README_en.md)
 
 </div>
 
@@ -220,7 +224,7 @@ minimind2系列旧模型均经过权重映射+（微调训练）QKVO线性层校
 * Ubuntu==20.04
 * CUDA==12.2
 * Python==3.10.16
-* [requirements.txt](./requirements.txt)
+* [requirements.txt](../../requirements.txt)
 
 </details>
 
@@ -570,7 +574,7 @@ MiniMind训练数据集下载地址： [ModelScope](https://www.modelscope.cn/da
 ![structure](../../images/LLM-structure.jpg)
 ![structure-moe](../../images/LLM-structure-moe.jpg)
 
-修改模型配置见[./model/model_minimind.py](./model/model_minimind.py)，参考模型参数版本见下表：
+修改模型配置见[./model/model_minimind.py](../../model/model_minimind.py)，参考模型参数版本见下表：
 
 | Model Name | params | len_vocab | max_pos | rope_theta | n_layers | d_model | kv_heads | q_heads | note |
 |------------|--------|-----------|---------|------------|----------|---------|----------|---------|------|
@@ -1616,13 +1620,13 @@ minimind-3-exam 不是更大的基座模型，也几乎没有额外注入新知�
 
 ## 🔧 模型转换
 
-* [./scripts/convert_model.py](./scripts/convert_model.py) 可用于 `torch / transformers` 两种模型格式之间的相互转换。
+* [./scripts/convert_model.py](../../scripts/convert_model.py) 可用于 `torch / transformers` 两种模型格式之间的相互转换。
 * 如无特殊说明，`MiniMind` 主线发布的开源模型通常以 `Transformers` 格式提供；若使用原生 `torch` 权重，请先执行 `torch2transformers` 转换。
 
 
 ## 🖥️ 基于 MiniMind 的 API 服务接口
 
-* [./scripts/serve_openai_api.py](./scripts/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
+* [./scripts/serve_openai_api.py](../../scripts/serve_openai_api.py) 提供了一个兼容 OpenAI API 的轻量聊天服务，便于将自己的模型接入 FastGPT、OpenWebUI、Dify 等第三方 UI。
 * 当前接口额外支持 `reasoning_content`、`tool_calls`、`open_thinking` 等字段，适合直接用于 Tool Calling / Thinking 场景。
 
 * 从 [HuggingFace](https://huggingface.co/collections/jingyaogong/minimind-66caf8d999f5c7fa64f399e5) 下载模型权重后，目录结构示例如下：
@@ -1981,4 +1985,4 @@ python llmexport.py --path /path/to/模型路径/ --export mnn --hqq --dst_path 
 
 # ⚖️ 开源协议
 
-本项目采用 [Apache License 2.0](LICENSE) 开源协议。
+本项目采用 [Apache License 2.0](../../LICENSE) 开源协议。

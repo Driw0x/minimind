@@ -1,5 +1,10 @@
 # DirectML Compatibility Audit
 
+[English](directml_audit.md) | [Français](directml_audit.fr.md) | [简体中文](directml_audit.zh-CN.md)
+
+[Project README](../../README.md)
+
+
 > **Historical DirectML archive — updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation
