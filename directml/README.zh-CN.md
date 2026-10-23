@@ -290,8 +290,8 @@ directml/
 ../docs/original/
 ```
 
-- [原始中文 README](../docs/original/README.md)
-- [原始英文 README](../docs/original/README_en.md)
+- [原始中文 README](../docs/original/README.zh-CN.md)
+- [原始英文 README](../docs/original/README.md)
 
 原始项目可在以下地址获取：
 

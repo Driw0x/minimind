@@ -1,4 +1,4 @@
-[English](README_en.md) | [简体中文](README.md) | [Français](README.fr.md)
+[English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
 
 [README du projet](../../README.fr.md)
 
@@ -26,7 +26,7 @@
 
 <div align="center">
 
-Français | [English](README_en.md) | [简体中文](README.md)
+Français | [English](README.md) | [简体中文](README.zh-CN.md)
 
 </div>
 

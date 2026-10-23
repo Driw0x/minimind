@@ -249,8 +249,8 @@ minimind/
 docs/original/
 ```
 
-- [原始中文README](docs/original/README.md)
-- [原始英文README](docs/original/README_en.md)
+- [原始中文README](docs/original/README.zh-CN.md)
+- [原始英文README](docs/original/README.md)
 
 对于上游使用，模型、数据集和项目详情，请参考这些文档或原始仓库：
 

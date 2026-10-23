@@ -250,8 +250,8 @@ The original upstream README files are preserved under:
 docs/original/
 ```
 
-- [Original Chinese README](docs/original/README.md)
-- [Original English README](docs/original/README_en.md)
+- [Original Chinese README](docs/original/README.zh-CN.md)
+- [Original English README](docs/original/README.md)
 
 For upstream usage, models, datasets and project details, refer to those documents or to the original repository:
 

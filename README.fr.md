@@ -249,8 +249,8 @@ Les fichiers README d'origine sont conservés sous :
 docs/original/
 ```
 
-- [Fichier README en chinois](docs/original/README.md)
-- [Fichier README en anglais](docs/original/README_en.md)
+- [Fichier README en chinois](docs/original/README.zh-CN.md)
+- [Fichier README en anglais](docs/original/README.md)
 
 Pour l'utilisation d'origine, les modèles, les ensembles de données et les détails du projet, consultez ces documents ou le dépôt d'origine :
 

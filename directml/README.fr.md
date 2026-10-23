@@ -290,8 +290,8 @@ Les fichiers README d'origine sont conservés en dehors de cet archivage :
 ../docs/original/
 ```
 
-- [README en chinois original](../docs/original/README.md)
-- [README en anglais original](../docs/original/README_en.md)
+- [README en chinois original](../docs/original/README.zh-CN.md)
+- [README en anglais original](../docs/original/README.md)
 
 Le projet original est disponible à :
 

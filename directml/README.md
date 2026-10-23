@@ -281,8 +281,8 @@ The upstream README files are preserved outside this archive:
 ../docs/original/
 ```
 
-- [Original Chinese README](../docs/original/README.md)
-- [Original English README](../docs/original/README_en.md)
+- [Original Chinese README](../docs/original/README.zh-CN.md)
+- [Original English README](../docs/original/README.md)
 
 The original project is available at:
 
