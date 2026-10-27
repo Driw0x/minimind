@@ -5,7 +5,7 @@
 [Project README](../../README.md)
 
 
-> **Historical DirectML archive — updated 2026-09-24**
+> **Historical DirectML archive - updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation
 > isolated a numerical divergence specific to the tested DirectML FP16 path.
@@ -744,7 +744,7 @@ but it is not part of this M4 FP16 smoke-runner result.
 
 ------------------------------------------------------------------------
 
-# Final M4 Conclusion — Historical, Superseded
+# Final M4 Conclusion - Historical, Superseded
 
 At the end of M4, the available execution, throughput, memory, and smoke-test
 evidence suggested that DirectML training was practically viable for the tested
@@ -987,7 +987,7 @@ Final Dense pretraining must be restarted from scratch with the retained
 
 ------------------------------------------------------------------------
 
-# Final Loss Path — 1200-Step Validation
+# Final Loss Path - 1200-Step Validation
 
 The final DirectML loss path was validated through step `1200` using
 FP16 compute, FP32 master weights, and per-token cross-entropy followed
@@ -1019,7 +1019,7 @@ tests. Full-epoch validation was subsequently completed successfully.
 
 ------------------------------------------------------------------------
 
-# Final Loss Path — Full Epoch 1 Validation
+# Final Loss Path - Full Epoch 1 Validation
 
 The final DirectML Dense pretraining path completed its first full epoch
 using FP16 compute, FP32 master weights, and per-token cross-entropy
@@ -1191,7 +1191,7 @@ training reference.
 
 ------------------------------------------------------------------------
 
-# M5 Final DirectML Cross-Backend Validation — 2026-09-24
+# M5 Final DirectML Cross-Backend Validation - 2026-09-24
 
 The final comparison moved beyond training-log loss and evaluated the resulting
 checkpoints on the same data and backend.

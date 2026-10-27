@@ -5,7 +5,7 @@
 <a id="minimind-directml-----historical-training-commands-and-checkpoint-resume"></a>
 # MiniMind DirectML --- 历史训练命令与检查点恢复
 
-> **历史 DirectML 归档 — 更新日期：2026-09-24**
+> **历史 DirectML 归档 - 更新日期：2026-09-24**
 >
 > DirectML 已不再作为 MiniMind 训练的主后端。M5 最终验证发现了一种特定于测试的 DirectML FP16 路径的数值偏差。以下历史结果为可复现性和工程参考保留；ROCm 开发情况另作文档说明。
 

@@ -1,7 +1,7 @@
 [English](training_commands.md) | [Français](training_commands.fr.md) | [简体中文](training_commands.zh-CN.md)
 
 <a id="minimind-rocm--training-commands"></a>
-# MiniMind ROCm — Commandes de formation
+# MiniMind ROCm - Commandes de formation
 
 L'environnement de configuration ainsi que les sémantiques ROCm/PyTorch pour les dispositifs sont documentés dans le dossier racine [`README.md`](../README.fr.md).
 
@@ -61,8 +61,8 @@ Après que `HIP_VISIBLE_DEVICES` filtre les dispositifs, le GPU dédié sélecti
 
 Les ensembles de données officiels de formation de MiniMind sont fournis par le projet upstream :
 
-- [ModelScope — minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
-- [Hugging Face — minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
+- [ModelScope - minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
+- [Hugging Face - minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
 
 Seuls les fichiers nécessaires doivent être téléchargés et placés dans :
 

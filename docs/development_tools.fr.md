@@ -190,6 +190,22 @@ average repetition      : 0.244
 La moyenne de répétition de l'entraînement complet n'est pas conservée comme métrique fiable car plusieurs générations ont atteint la limite de tokens mais ont été décodées en réponse visible vide.
 
 
+<a id="current-moe-full-data-checkpoints"></a>
+### Points de contrôle MoE sur les données complètes
+
+Les entraînements MoE Pretrain et Full SFT et leur évaluation initiale sur AMD ROCm sont terminés : `out/pretrain_768_moe.pth` a été entraîné sur `pretrain_t2t.jsonl`, puis `out/full_sft_768_moe.pth` sur `sft_t2t.jsonl`, initialisé à partir de MoE Pretrain. Configuration : dimension cachée de 768, 8 couches, 4 experts par couche, routage top-1, 198,42 M paramètres totaux et 63,94 M paramètres actifs annoncés.
+
+Avec `seed=42` et 256 échantillons par ensemble de référence Mini :
+
+|Poids|Perte de référence Pretrain|Perte de référence SFT|Perplexité Pretrain / SFT|Répétition externe|
+| --- | ---: | ---: | --- | --- |
+| `pretrain_768_moe.pth` | 1.5468 | 2.1544 | 4.70 / 8.62 |0.842 (réserve méthodologique)|
+| `full_sft_768_moe.pth` | 1.7544 | 1.2994 | 5.78 / 3.67 | 0.262 |
+
+Les références Mini sont des échantillons issus des données d'entraînement. Ces pertes mesurent l'ajustement aux distributions et l'oubli, pas la généralisation sur un test indépendant. Les huit prompts externes utilisent un décodage déterministe et un chat template, y compris pour Pretrain. À l'inverse, `eval_llm.py` utilise BOS + prompt brut pour Pretrain et échantillonne ses sorties. Le score `0.842` comporte donc cette réserve méthodologique.
+
+MoE Full SFT présente des pertes de référence inférieures au Dense Full SFT, mais une répétition légèrement supérieure (`0.262` contre `0.244`). Des erreurs arithmétiques (`12 - 5 + 3` évalué à `16`), du code Fibonacci incorrect, un suivi imparfait des consignes de format, des répétitions et des troncatures subsistent. Ces résultats n'établissent pas de supériorité générale du MoE ; voir [`generation_quality.md`](generation_quality.fr.md).
+
 <a id="baseline-status"></a>
 ### Statut de référence
 
@@ -227,6 +243,14 @@ Audit complet + essai externe :
 ```powershell
 python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 0 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256
 ```
+
+Audit MoE + benchmark externe, depuis la racine du dépôt :
+
+```powershell
+python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 1 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256 --seed 42
+```
+
+`--use_moe 1` sélectionne les points de contrôle `_moe.pth` sous `out/` ; les chemins de référence par défaut restent `dataset/pretrain_t2t_mini.jsonl` et `dataset/sft_t2t_mini.jsonl`. Les comparaisons Dense et MoE nécessitent des exécutions séparées, car `--use_moe` s'applique à tous les poids d'une même exécution.
 
 ---
 

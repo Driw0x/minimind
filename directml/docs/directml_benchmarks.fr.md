@@ -5,7 +5,7 @@
 <a id="minimind-----directml-benchmarks"></a>
 # MiniMind --- Benchmark DirectML
 
-> **Archive historique DirectML — mis à jour le 2026-09-24**
+> **Archive historique DirectML - mis à jour le 2026-09-24**
 >
 > DirectML n'est plus le backend actif pour le training de MiniMind. La validation finale M5 a isolé une divergence numérique spécifique à la chaîne de traitement DirectML FP16. Les résultats historiques ci-dessous sont conservés pour la reproductibilité et comme référence technique ; le développement ROCm est documenté séparément.
 
@@ -648,7 +648,7 @@ DPO reste intégré à la chaîne d'entraînement précédemment validée MiniMi
 ------------------------------------------------------------------------
 
 <a id="final-m4-conclusion--historical-superseded"></a>
-# Conclusion finale M4 — Historique, Superséduite
+# Conclusion finale M4 - Historique, Superséduite
 
 À la fin de M4, les preuves disponibles sur l'exécution, la vitesse, la mémoire et les tests de fumée suggéraient que l'entraînement DirectML était pratiquement viable pour la configuration testée de MiniMind sur le matériel de référence. **Cette conclusion a été ultérieurement remplacée par une validation complète de la qualité du modèle d'entraînement.**
 
@@ -854,7 +854,7 @@ La pré-formation dense finale doit être redémarrée à partir de zéro avec l
 ------------------------------------------------------------------------
 
 <a id="final-loss-path--1200-step-validation"></a>
-# Chemin final de perte — validation sur 1200 étapes
+# Chemin final de perte - validation sur 1200 étapes
 
 Le chemin final de perte DirectML a été validé jusqu'à l'étape `1200` en utilisant le calcul en FP16, des poids principaux en FP32, une croisée de croisement par token suivie d'une moyenne par token valide en FP32.
 
@@ -878,7 +878,7 @@ Ce résultat valide la dernière chaîne de calcul FP16 + poids principaux FP32 
 ------------------------------------------------------------------------
 
 <a id="final-loss-path--full-epoch-1-validation"></a>
-# Chaîne finale de perte — Validation complète de l'époque 1
+# Chaîne finale de perte - Validation complète de l'époque 1
 
 La dernière chaîne de pré-entraînement Dense DirectML a terminé son premier cycle complet en utilisant un calcul FP16, des poids principaux FP32, et une perte de croisement par token suivie d'une moyenne FP32 des tokens valides.
 
@@ -1015,7 +1015,7 @@ L'amélioration de la performance est donc validée pour la configuration testé
 ------------------------------------------------------------------------
 
 <a id="m5-final-directml-cross-backend-validation--2026-09-24"></a>
-# Validation croisée DirectML entre backends — M5 Final — 2026-09-24
+# Validation croisée DirectML entre backends - M5 Final - 2026-09-24
 
 La comparaison finale a dépassé la perte d'entraînement dans le journal et a évalué les points d'arrêt résultants sur les mêmes données et backend.
 

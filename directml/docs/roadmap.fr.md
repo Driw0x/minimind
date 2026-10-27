@@ -5,7 +5,7 @@
 <a id="minimind-backend-roadmap"></a>
 # Roadmap du backend MiniMind
 
-> **Archive historique DirectML — mis à jour le 2026-09-24**
+> **Archive historique DirectML - mis à jour le 2026-09-24**
 >
 > DirectML n'est plus le backend actif pour le training de MiniMind. La validation finale M5 a isolé une divergence numérique spécifique à la chaîne de traitement DirectML FP16 testée. Les résultats historiques ci-dessous sont conservés pour la reproductibilité et comme référence technique ; le développement de ROCm est documenté séparément.
 

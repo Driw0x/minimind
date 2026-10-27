@@ -1,7 +1,7 @@
 [English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
 
 <a id="minimind-directml--archived-experiment"></a>
-# MiniMind DirectML — 已归档实验
+# MiniMind DirectML - 已归档实验
 
 > **归档 / 历史**
 >
@@ -265,19 +265,19 @@ directml/
 <a id="directml-compatibility"></a>
 ### DirectML 兼容性
 
-- [DirectML 限制](docs/directml_issues.zh-CN.md#current-directml-limitations) — 不支持的操作、兼容性约束和 CPU 降级。
-- [DirectML 问题](docs/directml_issues.zh-CN.md) — 开发过程中遇到的问题、调查和决策。
-- [DirectML 性能基准](docs/directml_benchmarks.zh-CN.md) — 实验性的兼容性和性能结果。
-- [DirectML 审计](docs/directml_audit.zh-CN.md) — 对 CUDA 特定代码和 DirectML 兼容性问题的审计。
+- [DirectML 限制](docs/directml_issues.zh-CN.md#current-directml-limitations) - 不支持的操作、兼容性约束和 CPU 降级。
+- [DirectML 问题](docs/directml_issues.zh-CN.md) - 开发过程中遇到的问题、调查和决策。
+- [DirectML 性能基准](docs/directml_benchmarks.zh-CN.md) - 实验性的兼容性和性能结果。
+- [DirectML 审计](docs/directml_audit.zh-CN.md) - 对 CUDA 特定代码和 DirectML 兼容性问题的审计。
 
 <a id="historical-development-material"></a>
 ### 历史开发材料
 
-- [开发工具](docs/development-tools.zh-CN.md) — 审计、测试用例生成、训练和性能基准工具。
-- [训练命令](docs/training_commands.zh-CN.md) — 历史 DirectML 训练配置和恢复命令。
-- [项目内存](docs/project_memory.zh-CN.md) — 实验中的架构决策和技术经验教训。
-- [更新日志](docs/update_log.zh-CN.md) — DirectML 适配的按时间顺序记录。
-- [路线图](docs/roadmap.zh-CN.md) — DirectML 开发阶段的历史路线图。
+- [开发工具](docs/development-tools.zh-CN.md) - 审计、测试用例生成、训练和性能基准工具。
+- [训练命令](docs/training_commands.zh-CN.md) - 历史 DirectML 训练配置和恢复命令。
+- [项目内存](docs/project_memory.zh-CN.md) - 实验中的架构决策和技术经验教训。
+- [更新日志](docs/update_log.zh-CN.md) - DirectML 适配的按时间顺序记录。
+- [路线图](docs/roadmap.zh-CN.md) - DirectML 开发阶段的历史路线图。
 
 ---
 
@@ -295,7 +295,7 @@ directml/
 
 原始项目可在以下地址获取：
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 ---
 

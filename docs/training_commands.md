@@ -1,4 +1,4 @@
-# MiniMind ROCm — Training Commands
+# MiniMind ROCm - Training Commands
 
 [English](training_commands.md) | [Français](training_commands.fr.md) | [简体中文](training_commands.zh-CN.md)
 
@@ -65,8 +65,8 @@ opening a new terminal if the integrated GPU would otherwise be selected.
 
 Official MiniMind training datasets are provided by the upstream project:
 
-- [ModelScope — minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
-- [Hugging Face — minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
+- [ModelScope - minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
+- [Hugging Face - minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
 
 Only the required files need to be downloaded and placed in:
 

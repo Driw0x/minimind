@@ -1,7 +1,7 @@
 [English](training_commands.md) | [Français](training_commands.fr.md) | [简体中文](training_commands.zh-CN.md)
 
 <a id="minimind-rocm--training-commands"></a>
-# MiniMind ROCm — 训练命令
+# MiniMind ROCm - 训练命令
 
 环境配置以及ROCm/PyTorch设备语义在根目录 [`README.md`](../README.zh-CN.md) 中有文档说明。
 
@@ -61,8 +61,8 @@ AMD Radeon RX 7800 XT
 
 官方MiniMind训练数据集由上游项目提供：
 
-- [ModelScope — minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
-- [Hugging Face — minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
+- [ModelScope - minimind_dataset](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)
+- [Hugging Face - minimind_dataset](https://huggingface.co/datasets/jingyaogong/minimind_dataset/tree/main)
 
 仅需下载并放置所需的文件到：
 

@@ -28,6 +28,11 @@ The current priorities are:
 - preserve compatibility with the upstream MiniMind structure;
 - validate the MoE training path against the Dense baseline.
 
+MoE Pretrain and MoE Full SFT training, plus their initial evaluation on AMD ROCm,
+are complete. The retained checkpoints are `pretrain_768_moe.pth` and
+`full_sft_768_moe.pth`; see the [quality comparison](docs/generation_quality.md).
+Hugging Face repository: [Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch).
+
 Project planning and reproducible training commands are documented separately
 under [`docs/`](docs/).
 
@@ -196,17 +201,17 @@ This is expected with PyTorch ROCm.
 
 Documentation is split by responsibility:
 
-- [`docs/roadmap.md`](docs/roadmap.md) — milestones, mini-vs-full training rules,
+- [`docs/roadmap.md`](docs/roadmap.md) - milestones, mini-vs-full training rules,
   stage dependencies and validation criteria;
-- [`docs/training_commands.md`](docs/training_commands.md) — reproducible trainer
+- [`docs/training_commands.md`](docs/training_commands.md) - reproducible trainer
   commands, checkpoint outputs and resume usage;
 
-- [`docs/development_tools.md`](docs/development_tools.md) — diagnostic tools and
+- [`docs/development_tools.md`](docs/development_tools.md) - diagnostic tools and
   reference results;
-- [`docs/generation_quality.md`](docs/generation_quality.md) — checkpoint generation
+- [`docs/generation_quality.md`](docs/generation_quality.md) - checkpoint generation
   quality comparisons;
-- `docs/memory.md` (document absent from this snapshot) — runtime-memory design and evaluation plan;
-- [`docs/original/`](docs/original/) — preserved upstream MiniMind documentation.
+- `docs/memory.md` (document absent from this snapshot) - runtime-memory design and evaluation plan;
+- [`docs/original/`](docs/original/) - preserved upstream MiniMind documentation.
 
 ---
 
@@ -282,7 +287,7 @@ Changes should remain minimal and should not diverge from upstream training logi
 
 This repository is based on:
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 MiniMind and the original source code are developed by their respective authors.
 

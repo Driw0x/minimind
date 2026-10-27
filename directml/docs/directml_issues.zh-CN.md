@@ -5,7 +5,7 @@
 <a id="minimind-----directml-technical-issues"></a>
 # MiniMind --- DirectML 技术问题
 
-> **历史 DirectML 归档 — 更新日期：2026-09-24**
+> **历史 DirectML 归档 - 更新日期：2026-09-24**
 >
 > DirectML 已不再作为 MiniMind 的训练后端。M5 最终验证发现了一个特定于测试的 DirectML FP16 路径的数值发散问题。以下历史结果为可复现性和工程参考保留；ROCm 开发情况另作记录。
 
@@ -1012,7 +1012,7 @@ step % log_interval == 0
 ------------------------------------------------------------------------
 
 <a id="m5-final-blocking-issue--directml-fp16-numerical-divergence"></a>
-# M5最终阻塞问题——DirectML FP16数值发散
+# M5最终阻塞问题--DirectML FP16数值发散
 
 <a id="problem-22"></a>
 ## 问题

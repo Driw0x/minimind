@@ -1,4 +1,4 @@
-# MiniMind DirectML — Archived Experiment
+# MiniMind DirectML - Archived Experiment
 
 [English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
 
@@ -258,18 +258,18 @@ Local checkpoints and generated artifacts may not be tracked by Git depending on
 
 ### DirectML compatibility
 
-- [DirectML limitations](docs/directml_issues.md#current-directml-limitations) — unsupported operations, compatibility constraints and CPU fallbacks.
-- [DirectML issues](docs/directml_issues.md) — problems encountered during development, investigations and decisions.
-- [DirectML benchmarks](docs/directml_benchmarks.md) — experimental compatibility and performance results.
-- [DirectML audit](docs/directml_audit.md) — audit of CUDA-specific code and DirectML compatibility concerns.
+- [DirectML limitations](docs/directml_issues.md#current-directml-limitations) - unsupported operations, compatibility constraints and CPU fallbacks.
+- [DirectML issues](docs/directml_issues.md) - problems encountered during development, investigations and decisions.
+- [DirectML benchmarks](docs/directml_benchmarks.md) - experimental compatibility and performance results.
+- [DirectML audit](docs/directml_audit.md) - audit of CUDA-specific code and DirectML compatibility concerns.
 
 ### Historical development material
 
-- [Development tools](docs/development-tools.md) — audit, fixture generation, training and benchmarking utilities.
-- [Training commands](docs/training_commands.md) — historical DirectML training configurations and resume commands.
-- [Project memory](docs/project_memory.md) — architectural decisions and technical lessons from the experiment.
-- [Update log](docs/update_log.md) — chronological record of the DirectML adaptation.
-- [Roadmap](docs/roadmap.md) — historical roadmap from the DirectML development phase.
+- [Development tools](docs/development-tools.md) - audit, fixture generation, training and benchmarking utilities.
+- [Training commands](docs/training_commands.md) - historical DirectML training configurations and resume commands.
+- [Project memory](docs/project_memory.md) - architectural decisions and technical lessons from the experiment.
+- [Update log](docs/update_log.md) - chronological record of the DirectML adaptation.
+- [Roadmap](docs/roadmap.md) - historical roadmap from the DirectML development phase.
 
 ---
 
@@ -286,7 +286,7 @@ The upstream README files are preserved outside this archive:
 
 The original project is available at:
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 ---
 

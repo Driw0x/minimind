@@ -28,6 +28,9 @@ Les priorités actuelles sont :
 - préserver la compatibilité avec la structure d'origine de MiniMind ;
 - valider le chemin d'entraînement MoE par rapport à la base Dense.
 
+Les entraînements MoE Pretrain et MoE Full SFT, ainsi que leur évaluation initiale sur AMD ROCm, sont terminés. Les points de contrôle conservés sont `pretrain_768_moe.pth` et `full_sft_768_moe.pth` ; voir la [comparaison de qualité](docs/generation_quality.fr.md).
+Dépôt Hugging Face : [Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch).
+
 Les plans de projet et les commandes réproductibles d'entraînement sont documentés séparément sous [`docs/`](docs/).
 
 ---
@@ -197,13 +200,13 @@ Ceci est attendu avec PyTorch ROCm.
 
 La documentation est divisée selon les responsabilités :
 
-- [`docs/roadmap.md`](docs/roadmap.fr.md) — les jalons, les règles de formation mini-vs-pleine, les dépendances par étape et les critères de validation ;
-- [`docs/training_commands.md`](docs/training_commands.fr.md) — les commandes de formation reproductibles, les sorties de points de contrôle et l'utilisation de reprise ;
+- [`docs/roadmap.md`](docs/roadmap.fr.md) - les jalons, les règles de formation mini-vs-pleine, les dépendances par étape et les critères de validation ;
+- [`docs/training_commands.md`](docs/training_commands.fr.md) - les commandes de formation reproductibles, les sorties de points de contrôle et l'utilisation de reprise ;
 
-- [`docs/development_tools.md`](docs/development_tools.fr.md) — les outils diagnostiques et les résultats de référence ;
-- [`docs/generation_quality.md`](docs/generation_quality.fr.md) — les comparaisons de qualité de génération de points de contrôle ;
-- `docs/memory.md` (document absent de cet état du dépôt) — le plan de conception et d'évaluation de la mémoire en temps réel ;
-- [`docs/original/`](docs/original/) — la documentation de pointe de MiniMind conservée.
+- [`docs/development_tools.md`](docs/development_tools.fr.md) - les outils diagnostiques et les résultats de référence ;
+- [`docs/generation_quality.md`](docs/generation_quality.fr.md) - les comparaisons de qualité de génération de points de contrôle ;
+- `docs/memory.md` (document absent de cet état du dépôt) - le plan de conception et d'évaluation de la mémoire en temps réel ;
+- [`docs/original/`](docs/original/) - la documentation de pointe de MiniMind conservée.
 
 ---
 
@@ -283,7 +286,7 @@ Les modifications doivent rester minimales et ne doivent pas dévier de la logiq
 
 Ce dépôt est basé sur :
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 MiniMind et le code source original sont développés par leurs auteurs respectifs.
 

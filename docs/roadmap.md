@@ -20,7 +20,7 @@ Do not continue a full run from a short-validation checkpoint. Resume is only us
 
 ---
 
-## M1 — Dense Pretrain + Evaluation ✅
+## M1 - Dense Pretrain + Evaluation ✅
 
 Validate Dense pretraining on ROCm and produce the base checkpoint for Full SFT.
 
@@ -41,7 +41,7 @@ Validate Dense pretraining on ROCm and produce the base checkpoint for Full SFT.
 
 ---
 
-## M2 — Dense Full SFT + Evaluation ✅
+## M2 - Dense Full SFT + Evaluation ✅
 
 Validate Full SFT on ROCm from the retained M1 checkpoint.
 
@@ -68,7 +68,7 @@ Validate Full SFT on ROCm from the retained M1 checkpoint.
 
 ---
 
-## M3 — Remaining Upstream Pipeline ⏳
+## M3 - Remaining Upstream Pipeline ⏳
 
 Validate the remaining upstream MiniMind training stages on ROCm without redesigning the upstream pipeline.
 
@@ -101,9 +101,15 @@ Distillation
 
 ### MoE
 
-- [ ] Validate and complete MoE pretraining
-- [ ] Validate and complete MoE Full SFT
-- [ ] Evaluate the final MoE checkpoint
+- [x] Validate and complete MoE pretraining
+- [x] Validate and complete MoE Full SFT
+- [x] Evaluate the final MoE checkpoint
+
+Retained checkpoints: `pretrain_768_moe.pth` and `full_sft_768_moe.pth`, trained on
+`pretrain_t2t.jsonl` then `sft_t2t.jsonl`, with Full SFT initialized from MoE Pretrain.
+Initial ROCm evaluation is complete: Mini reference losses and eight deterministic
+external prompts. Results and methodological limits are recorded in
+[`generation_quality.md`](generation_quality.md).
 
 ### Distillation
 

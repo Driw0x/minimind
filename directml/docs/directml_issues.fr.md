@@ -5,7 +5,7 @@
 <a id="minimind-----directml-technical-issues"></a>
 # MiniMind --- Problèmes techniques DirectML
 
-> **Archive historique DirectML — mis à jour le 2026-09-24**
+> **Archive historique DirectML - mis à jour le 2026-09-24**
 >
 > DirectML n'est plus le backend actif pour le training de MiniMind. La validation finale M5 a isolé une divergence numérique spécifique à la chaîne FP16 testée de DirectML. Les résultats historiques ci-dessous sont conservés pour la reproductibilité et comme référence technique ; le développement ROCm est documenté séparément.
 
@@ -1012,7 +1012,7 @@ L'impact sur la bande passante est validé pour la configuration testée. Une va
 ------------------------------------------------------------------------
 
 <a id="m5-final-blocking-issue--directml-fp16-numerical-divergence"></a>
-# Problème de blocage M5 — Divergence numérique FP16 DirectML
+# Problème de blocage M5 - Divergence numérique FP16 DirectML
 
 <a id="problem-22"></a>
 ## Problème

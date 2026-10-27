@@ -21,7 +21,7 @@ Ne pas poursuivre une exécution complète à partir d'un point d'arrêt de vali
 ---
 
 <a id="m1--dense-pretrain--evaluation-"></a>
-## M1 — Pré-formation dense + évaluation ✅
+## M1 - Pré-formation dense + évaluation ✅
 
 Valider la pré-formation dense sur ROCm et produire le point d'arrêt de base pour la formation complète SFT.
 
@@ -45,7 +45,7 @@ Valider la pré-formation dense sur ROCm et produire le point d'arrêt de base p
 ---
 
 <a id="m2--dense-full-sft--evaluation-"></a>
-## M2 — Formation dense complète SFT + évaluation ✅
+## M2 - Formation dense complète SFT + évaluation ✅
 
 Valider la formation SFT complète sur ROCm à partir du point d'arrêt conservé de M1.
 
@@ -75,7 +75,7 @@ Valider la formation SFT complète sur ROCm à partir du point d'arrêt conserv�
 ---
 
 <a id="m3--remaining-upstream-pipeline-"></a>
-## M3 — Étapes restantes du pipeline amont ⏳
+## M3 - Étapes restantes du pipeline amont ⏳
 
 Valider les étapes restantes du pipeline de formation de MiniMind sur ROCm sans rédesigner le pipeline amont.
 
@@ -111,9 +111,11 @@ Distillation
 <a id="moe"></a>
 ### MoE
 
-- [ ] Valider et compléter la pré-formation MoE
-- [ ] Valider et compléter la formation SFT complète MoE
-- [ ] Évaluer le point d'arrêt final MoE
+- [x] Valider et compléter la pré-formation MoE
+- [x] Valider et compléter la formation SFT complète MoE
+- [x] Évaluer le point d'arrêt final MoE
+
+Points de contrôle conservés : `pretrain_768_moe.pth` et `full_sft_768_moe.pth`, entraînés sur `pretrain_t2t.jsonl` puis `sft_t2t.jsonl`, avec Full SFT initialisé à partir de MoE Pretrain. L'évaluation initiale sur ROCm est terminée : pertes sur les références Mini et huit prompts externes déterministes. Les résultats et les limites méthodologiques figurent dans [`generation_quality.md`](generation_quality.fr.md).
 
 <a id="distillation"></a>
 ### Distillation

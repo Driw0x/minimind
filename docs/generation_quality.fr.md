@@ -16,6 +16,8 @@ La comparaison actuelle couvre :
 - Point de contrôle complet de SFT Mini
 - Point de contrôle de pré-entraînement complet
 - Point de contrôle complet de SFT
+- Point de contrôle MoE Full Pretrain
+- Point de contrôle MoE Full SFT
 
 Ce document évalue uniquement les sorties des modèles. Il ne propose pas de nouvelles fonctionnalités d'inférence ni de modifications du pipeline d'entraînement.
 
@@ -30,6 +32,8 @@ Ce document évalue uniquement les sorties des modèles. Il ne propose pas de no
 |Mini Full SFT|Ensemble de données de pré-entraînement mini + ensemble de données de SFT mini|Évalué|
 |Full Pretrain|Ensemble complet de données de pré-entraînement|Évalué|
 |Full SFT|Ensemble complet de données de pré-entraînement + ensembles de données de SFT|Évalué|
+|MoE Full Pretrain|Ensemble complet de données de pré-entraînement|Évalué|
+|MoE Full SFT|Ensembles complets de données de pré-entraînement et de SFT|Évalué|
 
 Les modèles Mini actuels contiennent approximativement :
 
@@ -55,18 +59,26 @@ Le point de contrôle Full SFT montre donc une amélioration claire sur l'object
 La perte légèrement plus élevée sur les données de pré-entraînement après SFT est prévue être interprétée séparément de la qualité de génération.
 
 <a id="full-data-dense-reference"></a>
-### Référence dense sur l'ensemble des données
+### Référence Dense/MoE sur l'ensemble des données
 
-Les points de contrôle Dense actuels ont été entraînés sur les ensembles complets de données T2T et évalués sur les mêmes ensembles de référence Mini (`seed=42`, 256 échantillons chacun) :
+Les points de contrôle Dense et MoE actuels ont été entraînés sur les ensembles complets de données T2T et évalués sur les mêmes ensembles de référence Mini (`seed=42`, 256 échantillons chacun) :
 
-|Métrique|Full Pretrain|Full SFT|
-| --- | ---: | ---: |
-|Perte sur les données de référence de pré-entraînement| 1.6372 | 1.8730 |
-|Perte sur les données de référence de SFT| 2.8685 | 1.3771 |
-|Répétition externe|Non conservée comme fiable| 0.244 |
+|Modèle|Perte de référence Pretrain|Perte de référence SFT|Répétition externe|
+| --- | ---: | ---: | --- |
+|Dense Full Pretrain| 1.6372 | 2.8685 |Non retenue comme fiable|
+|Dense Full SFT| 1.8730 | 1.3771 | 0.244 |
+|MoE Full Pretrain| 1.5468 | 2.1544 |0.842 (réserve méthodologique)|
+|MoE Full SFT| 1.7544 | 1.2994 | 0.262 |
 
-L'agrégat de répétition du Full Pretrain n'est pas conservé car plusieurs générations ont atteint la limite de tokens lors de la décodage, produisant une réponse visible vide.
+Les perplexités MoE sur les références Pretrain / SFT sont `4.70 / 8.62` avant SFT et `5.78 / 3.67` après Full SFT.
 
+Les références sont `dataset/pretrain_t2t_mini.jsonl` et `dataset/sft_t2t_mini.jsonl`. Ces échantillons proviennent des données d'entraînement : les pertes et perplexités mesurent l'ajustement à ces distributions, pas la généralisation sur un test indépendant.
+
+L'agrégat de répétition du Dense Full Pretrain n'est pas conservé car plusieurs générations ont atteint la limite de tokens lors de la décodage, produisant une réponse visible vide.
+
+La répétition externe provient des huit prompts chinois de `scripts/diagnose_validation.py`, avec décodage déterministe (`do_sample=False`, jusqu'à 256 nouveaux tokens). Pour Pretrain, ce benchmark utilise un chat template, tandis que `eval_llm.py` utilise BOS + prompt brut et l'échantillonnage (`do_sample=True`). Le score MoE Pretrain `0.842` doit donc être interprété avec cette différence de protocole ; il ne décrit pas le comportement en complétion brute.
+
+Les pertes de référence MoE sont inférieures à celles du Dense aux étapes correspondantes, mais la répétition externe du MoE Full SFT est légèrement supérieure (`0.262` contre `0.244`). Ces résultats n'établissent pas de supériorité générale du MoE sur le Dense.
 
 ---
 
@@ -245,6 +257,32 @@ L'ensemble du dataset de SFT améliore donc le comportement et la stabilité de 
 
 ---
 
+<a id="moe-full-dataset-evaluation"></a>
+# Évaluation MoE sur les ensembles complets
+
+Les deux entraînements et leur évaluation initiale sur AMD ROCm sont terminés. `pretrain_768_moe.pth` a été entraîné sur `pretrain_t2t.jsonl` ; `full_sft_768_moe.pth` a été entraîné sur `sft_t2t.jsonl`, initialisé à partir de MoE Pretrain. L'architecture utilise une dimension cachée de 768, 8 couches, 4 experts par couche et un routage top-1 : 198,42 M paramètres totaux et 63,94 M paramètres actifs annoncés.
+
+<a id="moe-full-pretrain"></a>
+## MoE Full Pretrain
+
+Le point de contrôle se charge et s'évalue sur ROCm. Ses pertes de référence plus faibles indiquent un meilleur ajustement aux distributions d'entraînement échantillonnées. La génération externe au format chat reste très répétitive (`0.842`), sous la réserve de protocole ci-dessus.
+
+<a id="moe-full-sft"></a>
+## MoE Full SFT
+
+Le SFT réduit la perte de référence SFT de `2.1544` à `1.2994` et la répétition externe de `0.842` à `0.262`, tandis que la perte de référence Pretrain augmente de `1.5468` à `1.7544`. Cela indique un meilleur ajustement SFT avec un oubli mesurable de la distribution de pré-entraînement.
+
+La relecture manuelle relève encore :
+
+- des erreurs arithmétiques : `12 - 5 + 3` évalué à `16` au lieu de `10` ;
+- du code Fibonacci incorrect ;
+- des consignes de format imparfaitement suivies ;
+- des répétitions et des réponses tronquées.
+
+Une perte de référence plus faible ne rend pas ces générations fiables.
+
+---
+
 <a id="final-status"></a>
 # Statut final
 
@@ -267,3 +305,10 @@ L'ensemble du dataset de SFT améliore donc le comportement et la stabilité de 
 - [x] Évaluation du SFT complet avec des tests automatiques en amont
 - [x] Comparaison des checkpoints miniaturisés et à données complètes
 - [x] Documentation de l'amélioration des performances en matière d'exactitude factuelle, de raisonnement et de génération avec les ensembles de données complets
+
+<a id="moe-models"></a>
+## Modèles MoE
+
+- [x] Entraînements MoE Pretrain et MoE Full SFT terminés
+- [x] Évaluation initiale des deux points de contrôle sur ROCm terminée
+- [x] Résultats de référence Dense/MoE comparés et limites de génération documentées

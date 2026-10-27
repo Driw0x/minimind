@@ -1,7 +1,7 @@
 [English](README.md) | [Français](README.fr.md) | [简体中文](README.zh-CN.md)
 
 <a id="minimind-directml--archived-experiment"></a>
-# MiniMind DirectML — Expérimente archivé
+# MiniMind DirectML - Expérimente archivé
 
 > **Archivé / historique**
 >
@@ -265,19 +265,19 @@ Les points de contrôle locaux et les artefacts générés ne sont pas nécessai
 <a id="directml-compatibility"></a>
 ### Compatibilité avec DirectML
 
-- [Limites de DirectML](docs/directml_issues.fr.md#current-directml-limitations) — opérations non prises en charge, contraintes de compatibilité et recours au CPU.
-- [Problèmes de DirectML](docs/directml_issues.fr.md) — problèmes rencontrés lors du développement, enquêtes et décisions.
-- [Benchmark de DirectML](docs/directml_benchmarks.fr.md) — résultats expérimentaux de compatibilité et de performance.
-- [Audit de DirectML](docs/directml_audit.fr.md) — audit du code spécifique à CUDA et des préoccupations de compatibilité avec DirectML.
+- [Limites de DirectML](docs/directml_issues.fr.md#current-directml-limitations) - opérations non prises en charge, contraintes de compatibilité et recours au CPU.
+- [Problèmes de DirectML](docs/directml_issues.fr.md) - problèmes rencontrés lors du développement, enquêtes et décisions.
+- [Benchmark de DirectML](docs/directml_benchmarks.fr.md) - résultats expérimentaux de compatibilité et de performance.
+- [Audit de DirectML](docs/directml_audit.fr.md) - audit du code spécifique à CUDA et des préoccupations de compatibilité avec DirectML.
 
 <a id="historical-development-material"></a>
 ### Matériel historique de développement
 
-- [Outils de développement](docs/development-tools.fr.md) — audit, génération de fixtures, outils d'entraînement et de benchmarking.
-- [Commandes d'entraînement](docs/training_commands.fr.md) — configurations historiques d'entraînement avec DirectML et commandes de reprise.
-- [Mémoire du projet](docs/project_memory.fr.md) — décisions architecturales et leçons techniques tirées de l'expérience.
-- [Journal des mises à jour](docs/update_log.fr.md) — enregistrement chronologique de l'adaptation à DirectML.
-- [Carte de voie](docs/roadmap.fr.md) — carte de voie historique de la phase de développement de DirectML.
+- [Outils de développement](docs/development-tools.fr.md) - audit, génération de fixtures, outils d'entraînement et de benchmarking.
+- [Commandes d'entraînement](docs/training_commands.fr.md) - configurations historiques d'entraînement avec DirectML et commandes de reprise.
+- [Mémoire du projet](docs/project_memory.fr.md) - décisions architecturales et leçons techniques tirées de l'expérience.
+- [Journal des mises à jour](docs/update_log.fr.md) - enregistrement chronologique de l'adaptation à DirectML.
+- [Carte de voie](docs/roadmap.fr.md) - carte de voie historique de la phase de développement de DirectML.
 
 ---
 
@@ -295,7 +295,7 @@ Les fichiers README d'origine sont conservés en dehors de cet archivage :
 
 Le projet original est disponible à :
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 ---
 

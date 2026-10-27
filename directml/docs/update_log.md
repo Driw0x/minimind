@@ -5,7 +5,7 @@
 [Project README](../../README.md)
 
 
-> **Historical DirectML archive — updated 2026-09-24**
+> **Historical DirectML archive - updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation
 > isolated a numerical divergence specific to the tested DirectML FP16 path.

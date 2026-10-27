@@ -5,7 +5,7 @@
 <a id="development-tools"></a>
 # 开发工具
 
-> **历史 DirectML 归档 — 更新日期：2026-09-24**
+> **历史 DirectML 归档 - 更新日期：2026-09-24**
 >
 > DirectML 已不再作为 MiniMind 的训练后端。M5 最终验证发现了一个特定于测试的 DirectML FP16 路径的数值差异。以下历史结果为可重现性和工程参考保留；ROCm 开发情况另作记录。
 

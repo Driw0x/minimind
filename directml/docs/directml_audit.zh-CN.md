@@ -5,7 +5,7 @@
 <a id="directml-compatibility-audit"></a>
 # DirectML 兼容性审计
 
-> **历史 DirectML 归档 — 更新日期：2026-09-24**
+> **历史 DirectML 归档 - 更新日期：2026-09-24**
 >
 > DirectML 已不再作为 MiniMind 模型训练的主后端。M5 最终验证发现了一条特定于测试的 DirectML FP16 路径的数值偏差。历史结果仍被保留以供可重现性和工程参考；ROCm 开发情况另作记录。
 

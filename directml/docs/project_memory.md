@@ -5,7 +5,7 @@
 [Project README](../../README.md)
 
 
-> **Historical DirectML archive — updated 2026-09-24**
+> **Historical DirectML archive - updated 2026-09-24**
 >
 > DirectML is no longer the active MiniMind training backend. M5 final validation
 > isolated a numerical divergence specific to the tested DirectML FP16 path.
@@ -563,7 +563,7 @@ and kept separate from the normal lightweight `pytest -q` workflow.
 
 ------------------------------------------------------------------------
 
-## M4 Practical Viability Conclusion — Superseded
+## M4 Practical Viability Conclusion - Superseded
 
 At the end of M4, the tested MiniMind DirectML configuration was considered
 practically viable from the perspective of execution, throughput, memory, and
@@ -947,7 +947,7 @@ log-synchronized trainer becomes the final reference.
 
 ------------------------------------------------------------------------
 
-# M5 Final Diagnosis and Backend Decision — 2026-09-24
+# M5 Final Diagnosis and Backend Decision - 2026-09-24
 
 The final evidence separates checkpoint quality from backend execution.
 

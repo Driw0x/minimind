@@ -5,7 +5,7 @@
 <a id="minimind-----project-memory"></a>
 # MiniMind --- Mémoire du projet
 
-> **Archive historique de DirectML — mis à jour le 24 septembre 2026**
+> **Archive historique de DirectML - mis à jour le 24 septembre 2026**
 >
 > DirectML n'est plus le backend actif pour le training de MiniMind. La validation finale M5 a isolé une divergence numérique spécifique au chemin FP16 testé de DirectML. Les résultats historiques ci-dessous sont conservés pour la reproductibilité et comme référence technique ; le développement de ROCm est documenté séparément.
 
@@ -528,7 +528,7 @@ Une validation de fumée lourde DirectML est exécutée explicitement avec Pytho
 ------------------------------------------------------------------------
 
 <a id="m4-practical-viability-conclusion--superseded"></a>
-## Conclusion de viabilité pratique M4 — Supprimée
+## Conclusion de viabilité pratique M4 - Supprimée
 
 À la fin de M4, la configuration DirectML MiniMind testée était considérée comme pratiquement viable du point de vue de l'exécution, de la vitesse, de la mémoire et de la couverture des tests de fumée. Une validation complète du modèle de formation ultérieure a supprimé cette conclusion.
 
@@ -844,7 +844,7 @@ Le bénéfice en termes de débit est donc validé pour la configuration testée
 ------------------------------------------------------------------------
 
 <a id="m5-final-diagnosis-and-backend-decision--2026-09-24"></a>
-# M5 — Diagnostic final et décision sur le backend — 2026-09-24
+# M5 - Diagnostic final et décision sur le backend - 2026-09-24
 
 La preuve finale sépare la qualité des points d'arrêt du fonctionnement du backend.
 

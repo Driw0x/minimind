@@ -28,6 +28,9 @@
 - 保持与上游 MiniMind 项目结构的兼容性；
 - 以 Dense 基线为参照验证 MoE 训练路径。
 
+MoE Pretrain 和 MoE Full SFT 训练及其在 AMD ROCm 上的初步评估均已完成。保留的检查点为 `pretrain_768_moe.pth` 和 `full_sft_768_moe.pth`；详见[质量对比](docs/generation_quality.zh-CN.md)。
+Hugging Face 仓库：[Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch)。
+
 项目规划和可复现的训练命令在 [`docs/`](docs/) 中单独记录。
 
 ---
@@ -197,13 +200,13 @@ cuda:0
 
 文档按责任划分：
 
-- [`docs/roadmap.md`](docs/roadmap.zh-CN.md) — 里程碑、迷你训练与完整训练规则、阶段依赖关系和验证标准；
-- [`docs/training_commands.md`](docs/training_commands.zh-CN.md) — 可复现的训练命令、检查点输出和恢复使用说明；
+- [`docs/roadmap.md`](docs/roadmap.zh-CN.md) - 里程碑、迷你训练与完整训练规则、阶段依赖关系和验证标准；
+- [`docs/training_commands.md`](docs/training_commands.zh-CN.md) - 可复现的训练命令、检查点输出和恢复使用说明；
 
-- [`docs/development_tools.md`](docs/development_tools.zh-CN.md) — 诊断工具和参考结果；
-- [`docs/generation_quality.md`](docs/generation_quality.zh-CN.md) — 检查点生成质量对比；
-- `docs/memory.md`（本次仓库快照未包含该文档） — 运行时内存设计与评估计划；
-- [`docs/original/`](docs/original/) — 保留上游MiniMind文档。
+- [`docs/development_tools.md`](docs/development_tools.zh-CN.md) - 诊断工具和参考结果；
+- [`docs/generation_quality.md`](docs/generation_quality.zh-CN.md) - 检查点生成质量对比；
+- `docs/memory.md`（本次仓库快照未包含该文档） - 运行时内存设计与评估计划；
+- [`docs/original/`](docs/original/) - 保留上游MiniMind文档。
 
 ---
 
@@ -283,7 +286,7 @@ docs/original/
 
 本仓库基于：
 
-[MiniMind — jingyaogong/minimind](https://github.com/jingyaogong/minimind)
+[MiniMind - jingyaogong/minimind](https://github.com/jingyaogong/minimind)
 
 MiniMind及其原始源代码由各自的作者开发。
 
