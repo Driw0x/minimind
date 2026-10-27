@@ -101,9 +101,15 @@ Distillation
 
 ### MoE
 
-- [ ] Validate and complete MoE pretraining
-- [ ] Validate and complete MoE Full SFT
-- [ ] Evaluate the final MoE checkpoint
+- [x] Validate and complete MoE pretraining
+- [x] Validate and complete MoE Full SFT
+- [x] Evaluate the final MoE checkpoint
+
+Retained checkpoints: `pretrain_768_moe.pth` and `full_sft_768_moe.pth`, trained on
+`pretrain_t2t.jsonl` then `sft_t2t.jsonl`, with Full SFT initialized from MoE Pretrain.
+Initial ROCm evaluation is complete: Mini reference losses and eight deterministic
+external prompts. Results and methodological limits are recorded in
+[`generation_quality.md`](generation_quality.md).
 
 ### Distillation
 

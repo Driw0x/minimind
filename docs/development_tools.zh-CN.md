@@ -190,6 +190,22 @@ average repetition      : 0.244
 全预训练的外部重复平均值未被保留作为可靠指标，因为多个生成达到了令牌限制但解码为一个空可见响应。
 
 
+<a id="current-moe-full-data-checkpoints"></a>
+### 当前 MoE 全数据检查点
+
+MoE Pretrain 和 Full SFT 训练及其在 AMD ROCm 上的初步评估均已完成：`out/pretrain_768_moe.pth` 使用 `pretrain_t2t.jsonl` 训练，随后 `out/full_sft_768_moe.pth` 使用 `sft_t2t.jsonl` 训练，从 MoE Pretrain 初始化。配置为隐藏维度768、8层、每层4个专家、top-1 路由，总参数量198.42M，报告的活跃参数量63.94M。
+
+`seed=42`，每个 Mini 参考数据集256个样本：
+
+|权重|预训练参考损失|SFT 参考损失|预训练 / SFT 困惑度|外部重复率|
+| --- | ---: | ---: | --- | --- |
+| `pretrain_768_moe.pth` | 1.5468 | 2.1544 | 4.70 / 8.62 |0.842（方法限制）|
+| `full_sft_768_moe.pth` | 1.7544 | 1.2994 | 5.78 / 3.67 | 0.262 |
+
+Mini 参考样本来自训练数据。这些损失衡量分布拟合与遗忘，而非独立测试集上的泛化。八个外部提示使用确定性解码和聊天模板，Pretrain 也不例外。相比之下，`eval_llm.py` 对 Pretrain 使用 BOS + 原始提示，并进行采样。因此，`0.842` 需结合这一方法限制解读。
+
+MoE Full SFT 的参考损失低于 Dense Full SFT，但重复率略高（`0.262` 对比 `0.244`）。算术错误（`12 - 5 + 3` 回答为 `16`）、Fibonacci 代码错误、格式要求遵循不完善、重复和截断仍然存在。这些结果不能证明 MoE 全面优于 Dense；详见 [`generation_quality.md`](generation_quality.zh-CN.md)。
+
 <a id="baseline-status"></a>
 ### 基线状态
 
@@ -227,6 +243,14 @@ python -m scripts.diagnose_validation --weights pretrain full_sft --mode externa
 ```powershell
 python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 0 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256
 ```
+
+MoE 审计 + 外部基准，从仓库根目录执行：
+
+```powershell
+python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 1 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256 --seed 42
+```
+
+`--use_moe 1` 选择 `out/` 下的 `_moe.pth` 检查点；默认参考路径仍为 `dataset/pretrain_t2t_mini.jsonl` 和 `dataset/sft_t2t_mini.jsonl`。Dense 和 MoE 必须分别运行，因为 `--use_moe` 对一次运行中的所有权重生效。
 
 ---
 

@@ -28,6 +28,9 @@
 - 保持与上游 MiniMind 项目结构的兼容性；
 - 以 Dense 基线为参照验证 MoE 训练路径。
 
+MoE Pretrain 和 MoE Full SFT 训练及其在 AMD ROCm 上的初步评估均已完成。保留的检查点为 `pretrain_768_moe.pth` 和 `full_sft_768_moe.pth`；详见[质量对比](docs/generation_quality.zh-CN.md)。
+Hugging Face 仓库：[Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch)。
+
 项目规划和可复现的训练命令在 [`docs/`](docs/) 中单独记录。
 
 ---

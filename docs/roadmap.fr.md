@@ -111,9 +111,11 @@ Distillation
 <a id="moe"></a>
 ### MoE
 
-- [ ] Valider et compléter la pré-formation MoE
-- [ ] Valider et compléter la formation SFT complète MoE
-- [ ] Évaluer le point d'arrêt final MoE
+- [x] Valider et compléter la pré-formation MoE
+- [x] Valider et compléter la formation SFT complète MoE
+- [x] Évaluer le point d'arrêt final MoE
+
+Points de contrôle conservés : `pretrain_768_moe.pth` et `full_sft_768_moe.pth`, entraînés sur `pretrain_t2t.jsonl` puis `sft_t2t.jsonl`, avec Full SFT initialisé à partir de MoE Pretrain. L'évaluation initiale sur ROCm est terminée : pertes sur les références Mini et huit prompts externes déterministes. Les résultats et les limites méthodologiques figurent dans [`generation_quality.md`](generation_quality.fr.md).
 
 <a id="distillation"></a>
 ### Distillation

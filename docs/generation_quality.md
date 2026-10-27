@@ -15,6 +15,8 @@ The comparison currently covers:
 - Mini Full SFT checkpoint
 - Full Pretrain checkpoint
 - Full SFT checkpoint
+- MoE Full Pretrain checkpoint
+- MoE Full SFT checkpoint
 
 This document evaluates model outputs only. It does not introduce new inference features or modify the training pipeline.
 
@@ -28,6 +30,8 @@ This document evaluates model outputs only. It does not introduce new inference 
 | Mini Full SFT | Mini pretraining + Mini SFT datasets | Evaluated |
 | Full Pretrain | Complete pretraining dataset | Evaluated |
 | Full SFT | Complete pretraining + SFT datasets | Evaluated |
+| MoE Full Pretrain | Complete pretraining dataset | Evaluated |
+| MoE Full SFT | Complete pretraining + SFT datasets | Evaluated |
 
 The current Mini models contain approximately:
 
@@ -51,20 +55,38 @@ The Full SFT checkpoint therefore shows a clear improvement on the SFT objective
 
 The slightly higher loss on pretraining data after SFT is expected to be interpreted separately from generation quality.
 
-### Full-data Dense reference
+<a id="full-data-dense-reference"></a>
+### Full-data Dense/MoE reference
 
-The current Dense checkpoints were trained on the complete T2T datasets and evaluated
+The current Dense and MoE checkpoints were trained on the complete T2T datasets and evaluated
 on the same Mini reference datasets (`seed=42`, 256 samples each):
 
-| Metric | Full Pretrain | Full SFT |
-| --- | ---: | ---: |
-| Loss on pretrain reference | 1.6372 | 1.8730 |
-| Loss on SFT reference | 2.8685 | 1.3771 |
-| External repetition | Not retained as reliable | 0.244 |
+| Model | Pretrain reference loss | SFT reference loss | External repetition |
+| --- | ---: | ---: | --- |
+| Dense Full Pretrain | 1.6372 | 2.8685 | Not retained as reliable |
+| Dense Full SFT | 1.8730 | 1.3771 | 0.244 |
+| MoE Full Pretrain | 1.5468 | 2.1544 | 0.842 (methodological caveat) |
+| MoE Full SFT | 1.7544 | 1.2994 | 0.262 |
 
-The Full Pretrain repetition aggregate is not retained because several generations
+MoE perplexity on the pretrain / SFT references is `4.70 / 8.62` before SFT
+and `5.78 / 3.67` after Full SFT.
+
+The references are `dataset/pretrain_t2t_mini.jsonl` and `dataset/sft_t2t_mini.jsonl`.
+These samples come from training data: losses and perplexities measure fit to those
+distributions, not generalization on an independent test set.
+
+The Dense Full Pretrain repetition aggregate is not retained because several generations
 reached the token limit while decoding to an empty visible response.
 
+External repetition comes from the eight Chinese prompts in `scripts/diagnose_validation.py`,
+with deterministic decoding (`do_sample=False`, up to 256 new tokens). For Pretrain,
+this benchmark uses a chat template, whereas `eval_llm.py` uses BOS + raw prompt
+and sampling (`do_sample=True`). The MoE Pretrain score `0.842` must therefore be
+interpreted with this protocol difference; it does not describe raw completion behavior.
+
+MoE has lower reference losses than Dense at the corresponding stages, but MoE Full SFT
+has slightly higher external repetition (`0.262` vs `0.244`). These results do not
+establish general MoE superiority over Dense.
 
 ---
 
@@ -235,6 +257,37 @@ not make the 63.91M model reliably factual or reasoning-correct.
 
 ---
 
+# MoE full-dataset evaluation
+
+Both training stages and their initial AMD ROCm evaluation are complete.
+`pretrain_768_moe.pth` was trained on `pretrain_t2t.jsonl`;
+`full_sft_768_moe.pth` was trained on `sft_t2t.jsonl`, initialized from MoE Pretrain.
+The architecture uses hidden size 768, 8 layers, 4 experts per layer and top-1 routing:
+198.42M total parameters and a reported 63.94M active parameters.
+
+## MoE Full Pretrain
+
+The checkpoint loads and evaluates on ROCm. Its lower reference losses indicate
+better fit to the sampled training distributions. External chat-formatted generation
+remains highly repetitive (`0.842`), subject to the protocol caveat above.
+
+## MoE Full SFT
+
+SFT lowers SFT reference loss from `2.1544` to `1.2994` and external repetition from
+`0.842` to `0.262`, while pretrain reference loss rises from `1.5468` to `1.7544`.
+This indicates stronger SFT fit with measurable forgetting of the pretraining distribution.
+
+Manual review still finds:
+
+- arithmetic errors: `12 - 5 + 3` answered as `16` instead of `10`;
+- incorrect Fibonacci code;
+- imperfect adherence to format instructions;
+- repetition and truncated responses.
+
+Lower reference loss does not make these generations reliably correct.
+
+---
+
 # Final status
 
 ## Mini models
@@ -254,3 +307,9 @@ not make the 63.91M model reliably factual or reasoning-correct.
 - [x] Evaluate Full SFT with upstream automatic tests
 - [x] Compare Mini and full-data checkpoints
 - [x] Document whether factual accuracy, reasoning and generation quality improve with the complete datasets
+
+## MoE models
+
+- [x] Complete MoE Pretrain and MoE Full SFT training
+- [x] Complete initial ROCm evaluation of both checkpoints
+- [x] Compare Dense/MoE reference results and document generation limits

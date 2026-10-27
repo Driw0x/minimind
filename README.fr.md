@@ -28,6 +28,9 @@ Les priorités actuelles sont :
 - préserver la compatibilité avec la structure d'origine de MiniMind ;
 - valider le chemin d'entraînement MoE par rapport à la base Dense.
 
+Les entraînements MoE Pretrain et MoE Full SFT, ainsi que leur évaluation initiale sur AMD ROCm, sont terminés. Les points de contrôle conservés sont `pretrain_768_moe.pth` et `full_sft_768_moe.pth` ; voir la [comparaison de qualité](docs/generation_quality.fr.md).
+Dépôt Hugging Face : [Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch).
+
 Les plans de projet et les commandes réproductibles d'entraînement sont documentés séparément sous [`docs/`](docs/).
 
 ---

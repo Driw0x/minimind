@@ -184,6 +184,33 @@ because several generations reached the token limit but decoded to an empty visi
 response.
 
 
+### Current MoE full-data checkpoints
+
+MoE Pretrain and Full SFT training and initial AMD ROCm evaluation are complete:
+`out/pretrain_768_moe.pth` was trained on `pretrain_t2t.jsonl`, then
+`out/full_sft_768_moe.pth` on `sft_t2t.jsonl`, initialized from MoE Pretrain.
+Configuration: hidden size 768, 8 layers, 4 experts per layer, top-1 routing,
+198.42M total parameters and a reported 63.94M active parameters.
+
+With `seed=42` and 256 samples from each Mini reference dataset:
+
+| Weight | Pretrain reference loss | SFT reference loss | Pretrain / SFT perplexity | External repetition |
+| --- | ---: | ---: | --- | --- |
+| `pretrain_768_moe.pth` | 1.5468 | 2.1544 | 4.70 / 8.62 | 0.842 (methodological caveat) |
+| `full_sft_768_moe.pth` | 1.7544 | 1.2994 | 5.78 / 3.67 | 0.262 |
+
+The Mini references are samples from training data. These losses measure distribution
+fit and forgetting, not generalization on an independent test set.
+The eight external prompts use deterministic decoding and a chat template, including
+for Pretrain. In contrast, `eval_llm.py` uses BOS + raw prompt for Pretrain and samples
+its outputs. The `0.842` score therefore carries this methodological caveat.
+
+MoE Full SFT has lower reference losses than Dense Full SFT, but slightly higher
+repetition (`0.262` vs `0.244`). Arithmetic errors (`12 - 5 + 3` answered as `16`),
+incorrect Fibonacci code, imperfect format following, repetition and truncation remain.
+These results do not establish general MoE superiority; see
+[`generation_quality.md`](generation_quality.md).
+
 ### Baseline status
 
 The current `full_sft_768.pth` checkpoint is the retained Dense Full SFT baseline trained on the complete SFT dataset. The diagnostics show that:
@@ -219,6 +246,17 @@ Complete audit + external benchmark:
 ```powershell
 python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 0 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256
 ```
+
+MoE audit + external benchmark, from the repository root:
+
+```powershell
+python -m scripts.diagnose_validation --weights pretrain full_sft --mode full --device cuda:0 --hidden_size 768 --num_hidden_layers 8 --use_moe 1 --eval_samples 256 --stat_samples 256 --batch_size 4 --max_new_tokens 256 --seed 42
+```
+
+`--use_moe 1` selects the `_moe.pth` checkpoints under `out/`; the default reference
+paths remain `dataset/pretrain_t2t_mini.jsonl` and `dataset/sft_t2t_mini.jsonl`.
+Dense and MoE comparisons require separate invocations because `--use_moe` applies
+to every weight in one invocation.
 
 ---
 

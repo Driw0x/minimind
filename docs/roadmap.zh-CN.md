@@ -111,9 +111,11 @@ Distillation
 <a id="moe"></a>
 ### MoE
 
-- [ ] 验证并完成 MoE 预训练
-- [ ] 验证并完成 MoE 完整 SFT
-- [ ] 评估最终 MoE 检查点
+- [x] 验证并完成 MoE 预训练
+- [x] 验证并完成 MoE 完整 SFT
+- [x] 评估最终 MoE 检查点
+
+保留的检查点为 `pretrain_768_moe.pth` 和 `full_sft_768_moe.pth`，依次使用 `pretrain_t2t.jsonl` 和 `sft_t2t.jsonl` 训练，Full SFT 从 MoE Pretrain 初始化。ROCm 初步评估已完成：Mini 参考损失和八个外部提示的确定性生成。结果与方法限制见 [`generation_quality.md`](generation_quality.zh-CN.md)。
 
 <a id="distillation"></a>
 ### 蒸馏
