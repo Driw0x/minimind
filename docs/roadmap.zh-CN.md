@@ -120,9 +120,11 @@ Distillation
 <a id="distillation"></a>
 ### 蒸馏
 
-- [ ] 使用密集学生模型和 MoE 教师模型验证蒸馏
-- [ ] 完成蒸馏
-- [ ] 评估蒸馏后的检查点
+- [x] 使用 Dense 学生模型和 MoE 教师模型验证蒸馏
+- [x] 完成蒸馏
+- [x] 评估蒸馏后的检查点
+
+保留的 `full_dist_768.pth` 检查点已完成第5个 epoch，并可在 ROCm 上加载。与 Dense Full SFT 相比，SFT 参考损失从 `1.3771` 降至 `1.3698`，外部重复率从 `0.244` 降至 `0.218`；预训练参考损失从 `1.8730` 升至 `1.9377`。人工审查仍发现算术、事实、代码修正和严格指令遵循方面的错误。详见 [`generation_quality.md`](generation_quality.zh-CN.md)。
 
 <a id="final-validation"></a>
 ### 最终验证

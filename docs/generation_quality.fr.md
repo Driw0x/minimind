@@ -283,6 +283,27 @@ Une perte de référence plus faible ne rend pas ces générations fiables.
 
 ---
 
+<a id="distillation-evaluation"></a>
+# Évaluation de la distillation
+
+La distillation en boîte blanche de l'étudiant Dense de 63,91 M paramètres à partir de l'enseignant MoE Full SFT de 198,42 M paramètres est terminée. Le point de contrôle conservé `full_dist_768.pth` a terminé l'époque 5 ; le point de reprise enregistre l'étape `159358`. L'enseignant et l'étudiant distillé se chargent et s'évaluent sur AMD ROCm.
+
+Avec `seed=42` et 256 échantillons par ensemble de référence Mini :
+
+|Poids|Paramètres|Perte de référence Pretrain|Perte de référence SFT|Perplexité Pretrain / SFT|Répétition externe|
+| --- | ---: | ---: | ---: | --- | ---: |
+|Dense `full_sft_768.pth`|63,91 M|1.8730|1.3771|6.51 / 3.96|0.244|
+|Enseignant MoE `full_sft_768_moe.pth`|198,42 M|1.7544|1.2994|5.78 / 3.67|0.262|
+|Dense `full_dist_768.pth`|63,91 M|1.9377|1.3698|6.94 / 3.93|0.218|
+
+Par rapport au Dense Full SFT, la distillation réduit la perte de référence SFT de `0.0073` et la répétition externe de `0.026`, tandis que la perte de référence Pretrain augmente de `0.0647`. La longueur moyenne générée passe de `213.5` à `197.4` tokens. Ces faibles variations, mesurées sur des références issues de l'entraînement et huit prompts déterministes, ne démontrent pas une meilleure généralisation.
+
+La relecture manuelle relève une réponse plus claire et concise sur la couleur du ciel, mais le modèle distillé répond encore `11` à `12 - 5 + 3`, produit du code Fibonacci et `add` incorrect, dépasse les trois points demandés et donne des explications inexactes sur RAM/SSD et la photosynthèse. La distillation réduit donc l'indicateur mesuré de dégénérescence, sans établir une meilleure fiabilité factuelle, un meilleur raisonnement, une meilleure correction de code ni un suivi strict des consignes.
+
+Journaux d'évaluation bruts : `eval_results/distillation.txt` et `eval_results/distillation_teacher.txt`.
+
+---
+
 <a id="final-status"></a>
 # Statut final
 
@@ -312,3 +333,11 @@ Une perte de référence plus faible ne rend pas ces générations fiables.
 - [x] Entraînements MoE Pretrain et MoE Full SFT terminés
 - [x] Évaluation initiale des deux points de contrôle sur ROCm terminée
 - [x] Résultats de référence Dense/MoE comparés et limites de génération documentées
+
+<a id="distillation"></a>
+## Distillation
+
+- [x] Distillation étudiant Dense / enseignant MoE terminée
+- [x] Point de contrôle distillé évalué sur ROCm
+- [x] Dense Full SFT, enseignant MoE et étudiant distillé comparés
+- [x] Variations des métriques et échecs de génération restants documentés

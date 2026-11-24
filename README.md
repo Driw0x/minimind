@@ -28,9 +28,10 @@ The current priorities are:
 - preserve compatibility with the upstream MiniMind structure;
 - validate the MoE training path against the Dense baseline.
 
-MoE Pretrain and MoE Full SFT training, plus their initial evaluation on AMD ROCm,
-are complete. The retained checkpoints are `pretrain_768_moe.pth` and
-`full_sft_768_moe.pth`; see the [quality comparison](docs/generation_quality.md).
+MoE Pretrain, MoE Full SFT and Dense-student distillation training, plus their
+initial evaluation on AMD ROCm, are complete. The retained checkpoints are
+`pretrain_768_moe.pth`, `full_sft_768_moe.pth` and `full_dist_768.pth`; see the
+[quality comparison](docs/generation_quality.md).
 Hugging Face repository: [Driw0x/minimind-rocm-pytorch](https://huggingface.co/Driw0x/minimind-rocm-pytorch).
 
 Project planning and reproducible training commands are documented separately

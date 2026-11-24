@@ -113,9 +113,16 @@ external prompts. Results and methodological limits are recorded in
 
 ### Distillation
 
-- [ ] Validate Distillation with Dense student and MoE teacher
-- [ ] Complete Distillation
-- [ ] Evaluate the distilled checkpoint
+- [x] Validate Distillation with Dense student and MoE teacher
+- [x] Complete Distillation
+- [x] Evaluate the distilled checkpoint
+
+The retained `full_dist_768.pth` checkpoint completed epoch 5 and loads on ROCm.
+Against Dense Full SFT, SFT reference loss improves from `1.3771` to `1.3698`
+and external repetition from `0.244` to `0.218`; pretrain reference loss rises
+from `1.8730` to `1.9377`. Manual review still finds arithmetic, factual, code
+correction and strict instruction-following failures. See
+[`generation_quality.md`](generation_quality.md).
 
 ### Final validation
 

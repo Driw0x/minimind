@@ -211,6 +211,24 @@ incorrect Fibonacci code, imperfect format following, repetition and truncation 
 These results do not establish general MoE superiority; see
 [`generation_quality.md`](generation_quality.md).
 
+### Current distilled checkpoint
+
+Dense-student / MoE-teacher distillation is complete. `out/full_dist_768.pth`
+contains 63.91M parameters; its resume checkpoint completed epoch 5 at step
+`159358`.
+
+With the same `seed=42` and 256-sample Mini references:
+
+| Weight | Pretrain reference loss | SFT reference loss | Pretrain / SFT perplexity | External repetition |
+| --- | ---: | ---: | --- | ---: |
+| `full_sft_768.pth` | 1.8730 | 1.3771 | 6.51 / 3.96 | 0.244 |
+| `full_dist_768.pth` | 1.9377 | 1.3698 | 6.94 / 3.93 | 0.218 |
+
+Distillation slightly improves SFT fit and repetition, but increases pretrain loss.
+Manual review still finds arithmetic, factual, code-correction and strict
+instruction-following failures. See [`generation_quality.md`](generation_quality.md)
+for the full comparison and methodological limits.
+
 ### Baseline status
 
 The current `full_sft_768.pth` checkpoint is the retained Dense Full SFT baseline trained on the complete SFT dataset. The diagnostics show that:

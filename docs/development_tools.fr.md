@@ -206,6 +206,20 @@ Les références Mini sont des échantillons issus des données d'entraînement.
 
 MoE Full SFT présente des pertes de référence inférieures au Dense Full SFT, mais une répétition légèrement supérieure (`0.262` contre `0.244`). Des erreurs arithmétiques (`12 - 5 + 3` évalué à `16`), du code Fibonacci incorrect, un suivi imparfait des consignes de format, des répétitions et des troncatures subsistent. Ces résultats n'établissent pas de supériorité générale du MoE ; voir [`generation_quality.md`](generation_quality.fr.md).
 
+<a id="current-distilled-checkpoint"></a>
+### Point de contrôle distillé actuel
+
+La distillation étudiant Dense / enseignant MoE est terminée. `out/full_dist_768.pth` contient 63,91 M paramètres ; son point de reprise a terminé l'époque 5 à l'étape `159358`.
+
+Avec le même `seed=42` et 256 échantillons par référence Mini :
+
+|Poids|Perte de référence Pretrain|Perte de référence SFT|Perplexité Pretrain / SFT|Répétition externe|
+| --- | ---: | ---: | --- | ---: |
+| `full_sft_768.pth` | 1.8730 | 1.3771 | 6.51 / 3.96 | 0.244 |
+| `full_dist_768.pth` | 1.9377 | 1.3698 | 6.94 / 3.93 | 0.218 |
+
+La distillation améliore légèrement l'ajustement SFT et la répétition, mais augmente la perte Pretrain. La relecture manuelle relève encore des erreurs arithmétiques, factuelles, de correction de code et de suivi strict des consignes. Voir [`generation_quality.md`](generation_quality.fr.md) pour la comparaison complète et les limites méthodologiques.
+
 <a id="baseline-status"></a>
 ### Statut de référence
 

@@ -206,6 +206,20 @@ Mini 参考样本来自训练数据。这些损失衡量分布拟合与遗忘，
 
 MoE Full SFT 的参考损失低于 Dense Full SFT，但重复率略高（`0.262` 对比 `0.244`）。算术错误（`12 - 5 + 3` 回答为 `16`）、Fibonacci 代码错误、格式要求遵循不完善、重复和截断仍然存在。这些结果不能证明 MoE 全面优于 Dense；详见 [`generation_quality.md`](generation_quality.zh-CN.md)。
 
+<a id="current-distilled-checkpoint"></a>
+### 当前蒸馏检查点
+
+Dense 学生模型 / MoE 教师模型蒸馏已完成。`out/full_dist_768.pth` 包含63.91M参数；其续训检查点已完成第5个 epoch，step 为 `159358`。
+
+使用相同的 `seed=42` 和每个 Mini 参考数据集256个样本：
+
+|权重|预训练参考损失|SFT 参考损失|预训练 / SFT 困惑度|外部重复率|
+| --- | ---: | ---: | --- | ---: |
+| `full_sft_768.pth` | 1.8730 | 1.3771 | 6.51 / 3.96 | 0.244 |
+| `full_dist_768.pth` | 1.9377 | 1.3698 | 6.94 / 3.93 | 0.218 |
+
+蒸馏略微改善了 SFT 拟合和重复率，但增加了预训练损失。人工审查仍发现算术、事实、代码修正和严格指令遵循方面的错误。完整对比与方法限制见 [`generation_quality.md`](generation_quality.zh-CN.md)。
+
 <a id="baseline-status"></a>
 ### 基线状态
 

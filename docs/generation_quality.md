@@ -288,6 +288,39 @@ Lower reference loss does not make these generations reliably correct.
 
 ---
 
+# Distillation evaluation
+
+White-box distillation of the 63.91M-parameter Dense student from the 198.42M-parameter
+MoE Full SFT teacher is complete. The retained `full_dist_768.pth` checkpoint completed
+epoch 5; the resume checkpoint records step `159358`. Both the teacher and distilled
+student load and evaluate on AMD ROCm.
+
+With `seed=42` and 256 samples from each Mini reference dataset:
+
+| Weight | Parameters | Pretrain reference loss | SFT reference loss | Pretrain / SFT perplexity | External repetition |
+| --- | ---: | ---: | ---: | --- | ---: |
+| Dense `full_sft_768.pth` | 63.91M | 1.8730 | 1.3771 | 6.51 / 3.96 | 0.244 |
+| MoE teacher `full_sft_768_moe.pth` | 198.42M | 1.7544 | 1.2994 | 5.78 / 3.67 | 0.262 |
+| Dense `full_dist_768.pth` | 63.91M | 1.9377 | 1.3698 | 6.94 / 3.93 | 0.218 |
+
+Relative to Dense Full SFT, distillation lowers SFT reference loss by `0.0073` and
+external repetition by `0.026`, while pretrain reference loss rises by `0.0647`.
+Average generated length falls from `213.5` to `197.4` tokens. These are small metric
+changes on training-derived references and eight deterministic prompts, not evidence
+of generalization.
+
+Manual review finds one clearer, concise sky-color response, but the distilled model
+still answers `12 - 5 + 3` as `11`, emits incorrect Fibonacci and `add` code, exceeds
+the requested three bullet points, and gives inaccurate RAM/SSD and photosynthesis
+explanations. Distillation therefore reduces the measured degeneration indicator but
+does not establish better factual reliability, reasoning, code correctness or strict
+instruction following.
+
+Raw evaluation logs: `eval_results/distillation.txt` and
+`eval_results/distillation_teacher.txt`.
+
+---
+
 # Final status
 
 ## Mini models
@@ -313,3 +346,10 @@ Lower reference loss does not make these generations reliably correct.
 - [x] Complete MoE Pretrain and MoE Full SFT training
 - [x] Complete initial ROCm evaluation of both checkpoints
 - [x] Compare Dense/MoE reference results and document generation limits
+
+## Distillation
+
+- [x] Complete Dense-student / MoE-teacher distillation
+- [x] Evaluate the distilled checkpoint on ROCm
+- [x] Compare Dense Full SFT, MoE teacher and distilled student
+- [x] Document metric changes and remaining generation failures

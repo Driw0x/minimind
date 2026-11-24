@@ -120,9 +120,11 @@ Points de contrôle conservés : `pretrain_768_moe.pth` et `full_sft_768_moe.pth
 <a id="distillation"></a>
 ### Distillation
 
-- [ ] Valider la distillation avec un étudiant dense et un enseignant MoE
-- [ ] Compléter la distillation
-- [ ] Évaluer le point d'arrêt distillé
+- [x] Valider la distillation avec un étudiant Dense et un enseignant MoE
+- [x] Terminer la distillation
+- [x] Évaluer le point de contrôle distillé
+
+Le point de contrôle conservé `full_dist_768.pth` a terminé l'époque 5 et se charge sur ROCm. Par rapport au Dense Full SFT, la perte de référence SFT passe de `1.3771` à `1.3698` et la répétition externe de `0.244` à `0.218` ; la perte de référence Pretrain augmente de `1.8730` à `1.9377`. La relecture manuelle relève encore des erreurs arithmétiques, factuelles, de correction de code et de suivi strict des consignes. Voir [`generation_quality.md`](generation_quality.fr.md).
 
 <a id="final-validation"></a>
 ### Validation finale
